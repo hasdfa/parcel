@@ -1,0 +1,23 @@
+{
+  "name": "@vraksha/parceljs-nextjs-image-transformer",
+  "version": "1.0.0",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "source": "src/index.js",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "parcel build"
+  },
+  "dependencies": {
+    "@parcel/plugin": "^2.13.3",
+    "image-size": "^1.2.0",
+    "plaiceholder": "^3.0.0"
+  }
+}

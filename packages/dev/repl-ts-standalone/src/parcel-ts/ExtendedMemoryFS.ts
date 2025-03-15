@@ -438,8 +438,8 @@ registerSerializableClass(`repl-ExtendedMemoryFS`, ExtendedMemoryFS);
 // 	let fs = new ExtendedMemoryFS();
 // 	await fs.mkdir("/app");
 // 	await fs.writeFile("/app/x.txt", "abcdefghijklmnopqrstuvwxyz");
-// 	// console.log(await fs.readdir("/app"));
-// 	// console.log(fs.readFileSync("/app/x.txt", "utf8"));
+// 	// console.debug(await fs.readdir("/app"));
+// 	// console.debug(fs.readFileSync("/app/x.txt", "utf8"));
 
 // 	let fd = fs.openSync("/app/x.txt", "w");
 // 	// let buf = Buffer.alloc(10);
@@ -447,12 +447,12 @@ registerSerializableClass(`repl-ExtendedMemoryFS`, ExtendedMemoryFS);
 // 	// fs.readSync(fd, buf, { length: 3 });
 // 	// fs.readSync(fd, buf, { offset: 3, length: 3 });
 // 	// fs.readSync(fd, buf, 0, 10, null);
-// 	// console.log("b", buf.toString("utf8"));
+// 	// console.debug("b", buf.toString("utf8"));
 
 // 	// let buf = Buffer.from("new data");
 // 	// fs.writeSync(fd, buf, { position: 3 });
 // 	fs.closeSync(fd);
 
-// 	// console.log(fs.readFileSync("/app/x.txt"));
-// 	// console.log(fs.readFileSync("/app/x.txt", "utf8"));
+// 	// console.debug(fs.readFileSync("/app/x.txt"));
+// 	// console.debug(fs.readFileSync("/app/x.txt", "utf8"));
 // })();

@@ -1,9 +1,14 @@
 {
   "name": "@parcel/reporter-dev-server-sw",
   "version": "2.13.3",
+  "private": true,
+  "__name": "@vraksha/parcel-reporter-dev-server-sw",
+  "__version": "2.13.3-rc.5",
+  "__publishConfig": {
+    "access": "public"
+  },
   "description": "Blazing fast, zero configuration web application bundler",
   "license": "MIT",
-  "private": true,
   "funding": {
     "type": "opencollective",
     "url": "https://opencollective.com/parcel"

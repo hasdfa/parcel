@@ -40,6 +40,10 @@ import transformerPostcss from '@parcel/transformer-postcss';
 import transformerPosthtml from '@parcel/transformer-posthtml';
 import transformerRaw from '@parcel/transformer-raw';
 import transformerReactRefreshWrap from '@parcel/transformer-react-refresh-wrap';
+// import nextjsImageTransformer from '@vraksha/parceljs-nextjs-image-transformer';
+// "*.{png,jpg,jpeg,gif,svg,webp,avif}": [
+//   "@vraksha/parceljs-nextjs-image-transformer"
+// ],
 
 export const BUILTINS = {
   '@parcel/bundler-default': bundlerDefault,
@@ -67,6 +71,7 @@ export const BUILTINS = {
   '@parcel/transformer-posthtml': transformerPosthtml,
   '@parcel/transformer-raw': transformerRaw,
   '@parcel/transformer-react-refresh-wrap': transformerReactRefreshWrap,
+  // '@vraksha/parceljs-nextjs-image-transformer': nextjsImageTransformer,
 };
 
 // Package.json fields. Must match package_json.rs.

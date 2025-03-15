@@ -1,18 +1,18 @@
-// @flow
 import {Reporter} from '@parcel/plugin';
 import HMRServer, {getHotAssetContents} from './HMRServer';
 
 let hmrServer;
-let hmrAssetSourceCleanup: (() => void) | void;
+/** @type {(() => void) | void} */
+let hmrAssetSourceCleanup;
 
-export default (new Reporter({
+export default new Reporter({
   async report({event, options}) {
     let {hmrOptions} = options;
     switch (event.type) {
       case 'watchStart': {
         if (hmrOptions) {
           hmrServer = new HMRServer(data =>
-            // $FlowFixMe
+            // @ts-ignore
             globalThis.PARCEL_SERVICE_WORKER('hmrUpdate', data),
           );
         }
@@ -24,18 +24,34 @@ export default (new Reporter({
         break;
       case 'buildSuccess':
         {
-          let files: {|[string]: string|} = {};
+          /** @type {Object.<string, string>} */
+          let files = {};
           for (let f of await options.outputFS.readdir('/app/dist')) {
-            files[f] = await options.outputFS.readFile(
+            let fileContent = await options.outputFS.readFile(
               '/app/dist/' + f,
               'utf8',
             );
+
+            if (/^[\d,]+$/.test(fileContent)) {
+              fileContent = Buffer.from(
+                fileContent.split(',').map(Number),
+              ).toString('utf8');
+            }
+
+            files[f] = fileContent;
           }
-          // $FlowFixMe
-          await globalThis.PARCEL_SERVICE_WORKER('setFS', files);
+          const {projectId, previewHost} = JSON.parse(
+            await options.outputFS.readFile('/app/.preview-data', 'utf8'),
+          );
+          // @ts-ignore
+          await globalThis.PARCEL_SERVICE_WORKER('setFS', {
+            projectId,
+            previewHost,
+            files,
+          });
 
           hmrAssetSourceCleanup?.();
-          // $FlowFixMe
+          // @ts-ignore
           hmrAssetSourceCleanup = globalThis.PARCEL_SERVICE_WORKER_REGISTER(
             'hmrAssetSource',
             async id => {
@@ -59,4 +75,4 @@ export default (new Reporter({
       //   break;
     }
   },
-}): Reporter);
+});

@@ -1,9 +1,11 @@
-import type {FileSystem} from '../types/index';
+import type {FileSystem, LogFunction} from '../types/index';
 import {openDB} from 'idb';
 import {Buffer} from 'buffer';
 
 // @ts-ignore
-import {run} from '@mischnic/yarn-browser';
+import {run} from '@vraksha/yarn-browser';
+import {YarnProgressData} from '../../types/library';
+import _ from 'lodash';
 
 type DependenciesMap = Record<string, string>;
 type DependenciesList = Array<[string, string]>;
@@ -13,43 +15,63 @@ function shouldRunYarn(
   oldDeps: DependenciesList | undefined,
   newDeps: DependenciesList,
 ) {
-  if (oldDeps) {
-    if (oldDeps.length !== newDeps.length) return true;
-    else if (newDeps.length === 0) return false;
-    for (let i = 0; i < newDeps.length; i++) {
-      let [nameOld, versionOld] = oldDeps[i];
-      let [nameNew, versionNew] = newDeps[i];
-      if (nameOld !== nameNew || versionOld !== versionNew) {
-        return true;
-      }
+  const oldDepsSet = new Set(
+    oldDeps?.map(([name, version]) => `${name}@${version}`),
+  );
+  const newDepsSet = new Set(
+    newDeps.map(([name, version]) => `${name}@${version}`),
+  );
+  console.debug('[shouldRunYarn] oldDepsSet:', oldDeps);
+  console.debug('[shouldRunYarn] newDepsSet:', newDeps);
+  console.debug('[shouldRunYarn] compare:', _.isEqual(oldDeps, newDeps));
+
+  if (oldDepsSet.size !== newDepsSet.size) return true;
+  for (const dep of oldDepsSet) {
+    if (!newDepsSet.has(dep)) {
+      console.debug('[shouldRunYarn] Dependency not found in new deps:', dep);
+      return true;
     }
-    return false;
-  } else {
-    return newDeps.length > 0;
   }
+  return false;
+
+  // if (oldDeps) {
+  //   if (oldDeps.length !== newDeps.length) return true;
+  //   else if (newDeps.length === 0) return false;
+  //   for (let i = 0; i < newDeps.length; i++) {
+  //     let [nameOld, versionOld] = oldDeps[i];
+  //     let [nameNew, versionNew] = newDeps[i];
+  //     if (nameOld !== nameNew || versionOld !== versionNew) {
+  //       return true;
+  //     }
+  //   }
+  //   return false;
+  // } else {
+  //   return newDeps.length > 0;
+  // }
 }
 
 export async function yarnInstall(
   dependencies: DependenciesMap | null | undefined,
   fs: FileSystem,
   dir: string,
-  progress: (args: {
-    type: string;
-    displayName: string;
-    indent: string;
-    data: string;
-  }) => void,
-  options?: {
+  progress: (args: YarnProgressData) => void,
+  options: {
+    type?: 'install' | 'resolve';
+    registry?: string;
     ignorePackageJson?: boolean;
+    log?: LogFunction;
   },
 ) {
   let dependenciesList: DependenciesList = Object.entries(dependencies || {});
-  if (
-    !options?.ignorePackageJson &&
-    (await fs.exists('/app/package.json').catch(() => false))
-  ) {
+  let pkgJson = null;
+
+  if (await fs.exists('/app/package.json').catch(() => false)) {
     let pkg = await fs.readFile('/app/package.json', 'utf8');
-    let deps = JSON.parse(pkg).dependencies;
+    pkgJson = JSON.parse(pkg);
+  }
+
+  if (!options?.ignorePackageJson && pkgJson) {
+    let deps = pkgJson.dependencies;
     if (deps) {
       dependenciesList = Object.entries({
         ...dependencies,
@@ -58,20 +80,48 @@ export async function yarnInstall(
     }
   }
 
-  console.log('[debug] yarn-install', dependenciesList);
+  if (!pkgJson) {
+    pkgJson = {};
+  }
+
+  pkgJson.dependencies = Object.fromEntries(dependenciesList);
+
+  await fs.writeFile(
+    '/app/package.json',
+    JSON.stringify(pkgJson, null, 2),
+    undefined,
+  );
+
   if (shouldRunYarn(previousDependencies, dependenciesList)) {
+    progress({data: '> yarn install', type: 'info'});
     await fs.mkdirp('/tmp');
+
+    let startTime = Date.now();
+    progress({
+      displayName: 'YN0000',
+      data: '┌ Restoring local cache',
+      type: 'info',
+    });
     await Cache.restoreLockfile(fs);
-    await Cache.restoreCache(fs);
+    await Cache.restoreCache(fs, options.log);
+    progress({
+      displayName: 'YN0000',
+      data: `└ Completed in ${Date.now() - startTime}ms`,
+      type: 'success',
+    });
+
     let {report} = await run({
+      type: options.type || 'install',
       dir,
       fs,
       options: {
-        npmRegistryServer: 'registry.npmjs.org',
+        // npmRegistryServer: 'registry.npmjs.org',
+        npmRegistryServer: options.registry || 'registry.yarnpkg.com', // Yarn registry is 15% faster than npm registry
       },
       progress(v) {
         let {type, indent, data, displayName} = v;
-        console.debug(
+        options.log?.(
+          'debug',
           `%c[${displayName}] ${indent} ${data}`,
           `font-family: monospace;${type === 'error' ? 'color: red;' : ''}`,
         );
@@ -81,13 +131,9 @@ export async function yarnInstall(
     if (report.errorCount > 0) {
       throw [...report.reportedErrors][0] ?? new Error('Yarn install failed');
     }
-    console.debug(report);
+    options.log?.('debug', report);
     await Cache.saveLockfile(fs);
     await Cache.saveCache(fs);
-
-    console.log('[debug] yarn-install::success');
-  } else {
-    console.log('[debug] yarn-install::skipped');
   }
 
   previousDependencies = dependenciesList;
@@ -150,7 +196,7 @@ const Cache = {
     //     IDBKeyRange.upperBound(time - YARN_CACHE_STALE),
     //   );
     //   if (oldEntries.length > 0) {
-    //     console.log(`Purging cache, deleting ${oldEntries.length} packages`);
+    //     console.debug(`Purging cache, deleting ${oldEntries.length} packages`);
     //   }
     //   await Promise.all([
     //     ...oldEntries.map(({name}) => tx.store.delete(name)),
@@ -158,11 +204,11 @@ const Cache = {
     //   ]);
     // }
   },
-  async restoreCache(fs: FileSystem) {
+  async restoreCache(fs: FileSystem, log?: LogFunction) {
     await fs.mkdirp(YARN_CACHE_DIR);
     const db = await getDB();
     for (let {name, data} of await db.getAll(IDB_STORE_CACHE)) {
-      console.debug('Restored from Yarn cache:', YARN_CACHE_DIR + '/' + name);
+      log?.('debug', 'Restored from Yarn cache:', YARN_CACHE_DIR + '/' + name);
       await fs.writeFile(
         YARN_CACHE_DIR + '/' + name,
         Buffer.from(data),

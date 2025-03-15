@@ -1,54 +1,68 @@
-// @flow
-
-import type {
-  BuildSuccessEvent,
-  Dependency,
-  PluginOptions,
-  BundleGraph,
-  PackagedBundle,
-  Asset,
-} from '@parcel/types';
-import type {Diagnostic} from '@parcel/diagnostic';
-import type {AnsiDiagnosticResult} from '@parcel/utils';
+/**
+ * @typedef {import('@parcel/types').BuildSuccessEvent} BuildSuccessEvent
+ * @typedef {import('@parcel/types').Dependency} Dependency
+ * @typedef {import('@parcel/types').PluginOptions} PluginOptions
+ * @typedef {import('@parcel/types').BundleGraph} BundleGraph
+ * @typedef {import('@parcel/types').PackagedBundle} PackagedBundle
+ * @typedef {import('@parcel/types').Asset} Asset
+ * @typedef {import('@parcel/diagnostic').Diagnostic} Diagnostic
+ * @typedef {import('@parcel/utils').AnsiDiagnosticResult} AnsiDiagnosticResult
+ */
 
 import invariant from 'assert';
 import {ansiHtml, prettyDiagnostic, PromiseQueue} from '@parcel/utils';
 
 const HMR_ENDPOINT = '/__parcel_hmr/';
 
-type HMRAsset = {|
-  id: string,
-  url: string,
-  type: string,
-  output: string,
-  envHash: string,
-  depsByBundle: {[string]: {[string]: string, ...}, ...},
-|};
+/**
+ * @typedef {Object} HMRAsset
+ * @property {string} id
+ * @property {string} url
+ * @property {string} type
+ * @property {string} output
+ * @property {string} envHash
+ * @property {Object.<string, Object.<string, string>>} depsByBundle
+ */
 
-export type HMRMessage =
-  | {|
-      type: 'update',
-      assets: Array<HMRAsset>,
-    |}
-  | {|
-      type: 'error',
-      diagnostics: {|
-        ansi: Array<AnsiDiagnosticResult>,
-        html: Array<$Rest<AnsiDiagnosticResult, {|codeframe: string|}>>,
-      |},
-    |};
+/**
+ * @typedef {Object} HMRUpdateMessage
+ * @property {'update'} type
+ * @property {Array<HMRAsset>} assets
+ */
+
+/**
+ * @typedef {Object} HMRErrorMessage
+ * @property {'error'} type
+ * @property {Object} diagnostics
+ * @property {Array<AnsiDiagnosticResult>} diagnostics.ansi
+ * @property {Array<Omit<AnsiDiagnosticResult, 'codeframe'>>} diagnostics.html
+ */
+
+/**
+ * @typedef {HMRUpdateMessage | HMRErrorMessage} HMRMessage
+ */
 
 const FS_CONCURRENCY = 64;
 
 export default class HMRServer {
-  unresolvedError: HMRMessage | null = null;
-  broadcast: HMRMessage => void;
+  /** @type {HMRMessage | null} */
+  unresolvedError = null;
 
-  constructor(broadcast: HMRMessage => void) {
+  /** @type {function(HMRMessage): void} */
+  broadcast;
+
+  /**
+   * @param {function(HMRMessage): void} broadcast
+   */
+  constructor(broadcast) {
     this.broadcast = broadcast;
   }
 
-  async emitError(options: PluginOptions, diagnostics: Array<Diagnostic>) {
+  /**
+   * @param {PluginOptions} options
+   * @param {Array<Diagnostic>} diagnostics
+   */
+  async emitError(options, diagnostics) {
     let renderedDiagnostics = await Promise.all(
       diagnostics.map(d => prettyDiagnostic(d, options)),
     );
@@ -77,7 +91,10 @@ export default class HMRServer {
     this.broadcast(this.unresolvedError);
   }
 
-  async emitUpdate(event: BuildSuccessEvent) {
+  /**
+   * @param {BuildSuccessEvent} event
+   */
+  async emitUpdate(event) {
     this.unresolvedError = null;
 
     let changedAssets = new Set(event.changedAssets.values());
@@ -147,7 +164,11 @@ export default class HMRServer {
   }
 }
 
-function getSpecifier(dep: Dependency): string {
+/**
+ * @param {Dependency} dep
+ * @returns {string}
+ */
+function getSpecifier(dep) {
   if (typeof dep.meta.placeholder === 'string') {
     return dep.meta.placeholder;
   }
@@ -155,10 +176,12 @@ function getSpecifier(dep: Dependency): string {
   return dep.specifier;
 }
 
-export async function getHotAssetContents(
-  bundleGraph: BundleGraph<PackagedBundle>,
-  asset: Asset,
-): Promise<string> {
+/**
+ * @param {BundleGraph<PackagedBundle>} bundleGraph
+ * @param {Asset} asset
+ * @returns {Promise<string>}
+ */
+export async function getHotAssetContents(bundleGraph, asset) {
   let output = await asset.getCode();
   if (asset.type === 'js') {
     let publicId = bundleGraph.getAssetPublicId(asset);
@@ -182,6 +205,11 @@ export async function getHotAssetContents(
   return output;
 }
 
+/**
+ * @param {BundleGraph} bundleGraph
+ * @param {Asset} asset
+ * @returns {string}
+ */
 function getSourceURL(bundleGraph, asset) {
   return HMR_ENDPOINT + asset.id;
 }

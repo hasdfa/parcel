@@ -1,6 +1,7 @@
 import type {Diagnostic} from '@parcel/diagnostic';
-import type {FSList, REPLOptions} from '../utils';
-import type {FileSystem} from '../types/index';
+import type {FSList} from '../utils';
+import type {FileSystem, LogFunction, LogLevel} from '../types/index';
+import {YarnProgressData, REPLOptions} from '../../types/library';
 import type {BuildSuccessEvent} from '@parcel/types';
 import WorkerFarm from '@parcel/workers';
 
@@ -17,11 +18,10 @@ import configRepl from '../config/parcelrc.json';
 import {ExtendedMemoryFS as ExtendedFileSystem} from './ExtendedMemoryFS';
 import {generatePackageJson} from '../utils/';
 import {BrowserPackageManager} from './BrowserPackageManager';
-import {yarnInstall} from './yarn';
-import nanoid from '../nanoid';
+// import {yarnInstall} from './yarn';
+import {PackageManager} from './my-yarn';
+import {uuidv4} from '../nanoid';
 import path from 'path';
-
-import type {YarnProgressData} from '../../types/library';
 
 export interface BundleOutputError {
   type: 'failure';
@@ -47,8 +47,6 @@ let workerFarm: WorkerFarm;
 let fs: FileSystem;
 
 function startWorkerFarm(numWorkers?: number) {
-  console.log('[debug] startWorkerFarm', {numWorkers});
-
   if (!workerFarm || workerFarm.options.maxConcurrentWorkers !== numWorkers) {
     workerFarm?.end();
     workerFarm = createWorkerFarm(
@@ -61,7 +59,6 @@ function startWorkerFarm(numWorkers?: number) {
     globalThis.fs = fs;
     // @ts-ignore
     globalThis.workerFarm = workerFarm;
-    console.log('[debug] startedWorkerFarm', fs, workerFarm);
   }
 }
 
@@ -109,6 +106,7 @@ global.PARCEL_SERVICE_WORKER_REGISTER = (
 };
 
 expose({
+  getFsPaths,
   preinstallPackages,
   bundle,
   watch,
@@ -219,7 +217,6 @@ async function setup(assets: FSList, options: REPLOptions) {
   let entries = assets
     .filter(([, data]) => data.isEntry)
     .map(([name]) => PathUtils.fromAssetPath(name));
-  console.log('[debug] setup::entries', entries);
   const bundler = new Parcel({
     entries,
     // https://github.com/parcel-bundler/parcel/pull/4290
@@ -260,17 +257,6 @@ async function collectResult(
     size: number;
     time: number;
   }[] = [];
-  if ('toJSON' in fs && typeof fs.toJSON === 'function') {
-    console.log('[debug] FS.toJSON', fs.toJSON());
-  } else {
-    console.log('[debug] FS', fs);
-  }
-
-  console.log('[debug] event.bundleGraph', event.bundleGraph);
-  console.log(
-    '[debug] event.bundleGraph.getBundles()',
-    event.bundleGraph.getBundles(),
-  );
 
   let sourcemaps = new Map<string, string>();
   for (let b of event.bundleGraph.getBundles()) {
@@ -313,7 +299,6 @@ async function syncAssetsToFS(assets: FSList, options: REPLOptions) {
     '/app/package.json',
     ...assets.map(([name]) => PathUtils.fromAssetPath(name)),
   ]);
-  console.log('[debug] fs-sync::filesToKeep', filesToKeep);
 
   for (let [name, {value}] of assets) {
     if (name === '/package.json') continue;
@@ -342,26 +327,38 @@ async function syncAssetsToFS(assets: FSList, options: REPLOptions) {
     }
     await fs.rimraf(f);
   }
+}
 
-  console.log(
-    '[debug] fs-sync::success',
-    JSON.stringify(
-      {
-        // @ts-ignore
-        dirs: fs.dirs,
-        // @ts-ignore
-        files: fs.files,
-      },
-      null,
-      2,
-    ),
+const readDirRecursive = async (
+  fs: FileSystem,
+  _path: string,
+): Promise<string[]> => {
+  const files = await fs.readdir(_path).catch(() => []);
+  const allFiles = await Promise.all(
+    files.map(async (file: string) => {
+      const filePath = path.join(_path, file);
+      const stats = await fs.stat(filePath).catch(() => null);
+      if (!stats) return null;
+
+      if (stats.isDirectory()) {
+        return readDirRecursive(fs, filePath);
+      } else {
+        return filePath;
+      }
+    }),
   );
+
+  return allFiles.filter(Boolean).flat() as any[];
+};
+
+async function getFsPaths() {
+  return await readDirRecursive(fs, '/');
 }
 
 async function preinstallPackages(
   dependencies: Record<string, string>,
-  progress?: (msg: string | YarnProgressData) => void,
-  options?: {rawProgress?: boolean},
+  progress: (msg: string | YarnProgressData) => void | undefined,
+  options: {rawProgress?: boolean; log?: LogFunction; registry: string},
 ): Promise<void> {
   const progressFn = progress
     ? options?.rawProgress
@@ -377,48 +374,97 @@ async function preinstallPackages(
         }
     : () => {};
 
-  await fs.mkdirp('/app').catch(() => {});
-  await yarnInstall(dependencies, fs, PathUtils.APP_DIR, progressFn, {
-    ignorePackageJson: true,
+  await fs.mkdirp(PathUtils.APP_DIR).catch(() => {});
+  // await yarnInstall(dependencies, fs, PathUtils.APP_DIR, progressFn, {
+  //   registry: options?.registry,
+  //   ignorePackageJson: true,
+  //   log: options?.log,
+  // });
+  await PackageManager.install(fs, {
+    dependencies,
+    registryBaseUrl: options?.registry,
+    cwd: PathUtils.APP_DIR,
+    reported: (type, data) => {
+      progressFn({type, data});
+    },
   });
+}
+
+function logFn(base?: LogFunction | false): LogFunction | undefined {
+  if (base === false) return undefined;
+  if (!base)
+    return (level: LogLevel, ...args: any[]) => {
+      console[level === 'info' ? 'log' : level](...args);
+    };
+
+  return base;
 }
 
 async function bundle(
   assets: FSList,
+  preview: {
+    projectId: string;
+    previewHost: string;
+  },
   options: REPLOptions,
-  progress: (
-    msg:
-      | string
-      | {type: string; displayName: string; indent: string; data: string},
-  ) => void,
+  progress: (msg: string | YarnProgressData) => void,
 ): Promise<BundleOutput> {
-  console.log('[debug] bundle::init', assets, options, progress);
   const {bundler, graphs} = await setup(assets, {...options, hmr: false});
-  console.log('[debug] bundle::setup', bundler, graphs);
+  // const log = logFn(options.log);
 
   resetSWPromise();
   await syncAssetsToFS(assets, options);
-  console.log('[debug] bundle::fs-synced');
 
-  await yarnInstall(options.dependencies, fs, PathUtils.APP_DIR, v => {
-    if (options.rawProgress) {
-      progress(v);
-    } else if (v.data.includes('Resolution step')) {
-      progress('Yarn: Resolving');
-    } else if (v.data.includes('Fetch step')) {
-      progress('Yarn: Fetching');
-    } else if (v.data.includes('Link step')) {
-      progress('Yarn: Linking');
-    }
+  const previewDataJson = JSON.stringify(preview);
+  await fs.writeFile('/.preview-data', previewDataJson, undefined);
+  await fs.writeFile('/app/.preview-data', previewDataJson, undefined);
+
+  // await yarnInstall(
+  //   options.dependencies,
+  //   fs,
+  //   PathUtils.APP_DIR,
+  //   v => {
+  //     if (options.rawProgress) {
+  //       progress(v);
+  //     } else if (v.data.includes('Resolution step')) {
+  //       progress('Yarn: Resolving');
+  //     } else if (v.data.includes('Fetch step')) {
+  //       progress('Yarn: Fetching');
+  //     } else if (v.data.includes('Link step')) {
+  //       progress('Yarn: Linking');
+  //     }
+  //   },
+  //   {log},
+  // );
+  await PackageManager.install(fs, {
+    cwd: PathUtils.APP_DIR,
+    registryBaseUrl: options?.registry,
+    reported: (type, data) => {
+      if (options.rawProgress) {
+        progress({type, data});
+      } else {
+        progress(data);
+      }
+    },
   });
 
-  progress('Bundling');
+  const writeProgress = (data: string, type?: string) => {
+    if (options.rawProgress) {
+      progress({data, type});
+    } else {
+      progress(data);
+    }
+  };
+
+  writeProgress('> npm run build');
+  writeProgress('Start building...');
 
   try {
     let event = await bundler.run();
-    console.log('[debug] bundle::runned', event);
+    writeProgress('Build success', 'success');
     return await collectResult(event, graphs, fs);
   } catch (error: any) {
+    writeProgress('Build failed', 'error');
     console.error(error, error.diagnostics);
 
     if (error.diagnostics) {
@@ -440,27 +486,52 @@ async function watch(
   assets: FSList,
   options: REPLOptions,
   onBuild: (output: BundleOutput) => void,
-  progress: (msg: string | null) => void,
+  progress: (msg: string | YarnProgressData) => void,
 ): Promise<{
   unsubscribe: () => Promise<any>;
   writeAssets: (assets: FSList) => Promise<any>;
 }> {
+  const log = logFn(options.log);
   let {bundler, graphs} = await setup(assets, options);
 
   resetSWPromise();
   await syncAssetsToFS(assets, options);
 
-  await yarnInstall(options.dependencies, fs, PathUtils.APP_DIR, v => {
-    if (v.data.includes('Resolution step')) {
-      progress('Yarn: Resolving');
-    } else if (v.data.includes('Fetch step')) {
-      progress('Yarn: Fetching');
-    } else if (v.data.includes('Link step')) {
-      progress('Yarn: Linking');
-    }
+  // await yarnInstall(
+  //   options.dependencies,
+  //   fs,
+  //   PathUtils.APP_DIR,
+  //   v => {
+  //     if (v.data.includes('Resolution step')) {
+  //       progress('Yarn: Resolving');
+  //     } else if (v.data.includes('Fetch step')) {
+  //       progress('Yarn: Fetching');
+  //     } else if (v.data.includes('Link step')) {
+  //       progress('Yarn: Linking');
+  //     }
+  //   },
+  //   {
+  //     log,
+  //     registry: options.registry,
+  //   },
+  // );
+  await PackageManager.install(fs, {
+    cwd: PathUtils.APP_DIR,
+    registryBaseUrl: options?.registry,
+    reported: (type, data) => {
+      if (options.rawProgress) {
+        progress({type, data});
+      } else {
+        progress(data);
+      }
+    },
   });
 
-  progress('building');
+  if (options.rawProgress) {
+    progress({data: 'Bundling'});
+  } else {
+    progress('Bundling');
+  }
 
   return proxy({
     unsubscribe: (
@@ -473,11 +544,11 @@ async function watch(
               break;
             }
             case 'buildFailure': {
-              console.log(event.diagnostics);
+              console.debug(event.diagnostics);
               onBuild({
                 type: 'failure',
                 error: await renderDiagnostics(fs, event.diagnostics),
-                diagnostics: await convertDiagnostics(fs, event.diagnostics),
+                // diagnostics: await convertDiagnostics(fs, event.diagnostics),
               });
               break;
             }
@@ -502,7 +573,7 @@ async function sendMsg(
     throw new Error('Could not send message, target is not a MessagePort');
   }
 
-  let id = nanoid();
+  let id = uuidv4();
   return new Promise(res => {
     let handler = (evt: MessageEvent) => {
       if (evt.data.id === id) {

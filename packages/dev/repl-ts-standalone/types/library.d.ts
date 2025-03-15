@@ -1,3 +1,4 @@
+import type {LogFunction} from '../src/types';
 import type {PackageJSON} from '@parcel/types';
 export type {PackageJSON};
 
@@ -42,6 +43,8 @@ export interface REPLOptions<RawProgress extends boolean = false> {
   dependencies: Record<string, string>;
   numWorkers?: number;
   rawProgress?: RawProgress;
+  log?: false | LogFunction;
+  registry: string;
 }
 
 export type BundleOutputError = {
@@ -64,9 +67,9 @@ export type BundleOutputSuccess = {
 export type BundleOutput = BundleOutputSuccess | BundleOutputError;
 
 export interface YarnProgressData {
-  type: string;
-  displayName: string;
-  indent: string;
+  type?: string;
+  displayName?: string;
+  indent?: string;
   data: string;
 }
 
@@ -78,7 +81,11 @@ export interface IParcelWorker {
   preinstallPackages(
     dependencies: Record<string, string>,
     progress?: (msg: string | YarnProgressData) => void,
-    options?: {rawProgress?: boolean},
+    options?: {
+      log?: false | LogFunction;
+      rawProgress?: boolean;
+      registry?: string;
+    },
   ): Promise<void>;
   bundle<RawProgress extends boolean = false>(
     files: FSList,
@@ -98,5 +105,13 @@ export interface IParcelWorker {
   }>;
 }
 
-function initWorker(workerUrl: URL, options?: WorkerOptions): IParcelWorker;
+function initWorker(
+  workerUrl: URL,
+  options: {
+    previewHost: string;
+    projectId: string;
+    workerOptions?: WorkerOptions;
+  },
+): IParcelWorker;
+
 export {initWorker};

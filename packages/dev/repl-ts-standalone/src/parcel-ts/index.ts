@@ -1,6 +1,6 @@
 import type {FS, FSList, REPLOptions} from '../utils';
 import type {BundleOutput} from './ParcelWorker';
-import nanoid from '../nanoid';
+import {uuidv4} from '../nanoid';
 
 import {proxy, wrap, transfer} from 'comlink';
 import {YarnProgressData} from '../../types/library';
@@ -22,7 +22,7 @@ class MessageTarget {
     this.receive.removeEventListener(...args);
   }
   sendMsg(type: string, data?: any, transfer?: Transferable[]): Promise<any> {
-    let id = nanoid();
+    let id = uuidv4();
     return new Promise(res => {
       let handler = (evt: MessageEvent) => {
         if (evt.data.id === id) {
@@ -40,9 +40,10 @@ let worker: any;
 
 export function initWorker(
   workerUrl: URL,
-  options?: {
+  initOptions: {
+    previewHost: string;
+    projectId: string;
     workerOptions?: WorkerOptions;
-    previewDomain?: string;
   },
 ) {
   if (!worker) {
@@ -50,7 +51,7 @@ export function initWorker(
       new Worker(workerUrl, {
         name: 'Parcel Worker Main',
         type: 'module',
-        ...options?.workerOptions,
+        ...initOptions?.workerOptions,
       }),
     );
   }
@@ -59,34 +60,22 @@ export function initWorker(
   if (navigator.serviceWorker) {
     clientIDPromise = (async () => {
       let {active: serviceWorker} = await navigator.serviceWorker.ready;
-      console.log('[debug] clientIDPromise::ready', serviceWorker);
-
       let sw = new MessageTarget(navigator.serviceWorker, serviceWorker);
 
       let {port1, port2} = new MessageChannel();
 
       // sw <-> port1 <-> port2 <-> parcel worker thread
       // sw <-> main thread
-      console.log('[debug] clientIDPromise::port1', port1);
-      console.log('[debug] clientIDPromise::port2', port2);
 
       sw.addEventListener('message', (evt: MessageEvent) => {
-        console.log('sw@message', evt.data);
         port2.postMessage(evt.data);
       });
       port2.addEventListener('message', (evt: MessageEvent) => {
-        console.log('port2@message', evt.data);
         sw.postMessage(evt.data);
       });
 
       port2.start();
       await worker.setServiceWorker(transfer(port1, [port1]));
-      console.log('[debug] clientIDPromise::setServiceWorker', port1);
-
-      if (options?.previewDomain) {
-        console.log('[debug] sw::setPreviewDomain', options.previewDomain);
-        await sw.sendMsg('setPreviewDomain', options.previewDomain);
-      }
 
       return sw.sendMsg('getID');
     })();
@@ -100,6 +89,9 @@ export function initWorker(
     },
     waitForFS: (): Promise<void> => {
       return worker.waitForFS();
+    },
+    getFsPaths: (): Promise<string[]> => {
+      return worker.getFsPaths();
     },
     preinstallPackages: (
       dependencies: Record<string, string>,
@@ -117,7 +109,18 @@ export function initWorker(
       options: REPLOptions,
       progress: (msg: string) => void,
     ): Promise<BundleOutput> => {
-      return worker.bundle(filesJson, options, proxy(progress));
+      return worker.bundle(
+        filesJson,
+        {
+          projectId: initOptions.projectId,
+          previewHost: initOptions.previewHost,
+        },
+        {
+          ...options,
+          log: options.log ? proxy(options.log) : undefined,
+        },
+        proxy(progress),
+      );
     },
     watch: async (
       files: FS,

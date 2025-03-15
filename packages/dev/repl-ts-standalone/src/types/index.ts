@@ -235,3 +235,6 @@ export interface Dirent {
   isSocket(): boolean;
   isSymbolicLink(): boolean;
 }
+
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogFunction = (level: LogLevel, ...args: any[]) => void;
