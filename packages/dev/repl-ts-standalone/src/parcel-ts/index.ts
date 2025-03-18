@@ -41,8 +41,8 @@ let worker: any;
 export function initWorker(
   workerUrl: URL,
   initOptions: {
-    previewHost: string;
     projectId: string;
+    previewHost?: string;
     workerOptions?: WorkerOptions;
   },
 ) {

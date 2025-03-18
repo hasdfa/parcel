@@ -108,8 +108,8 @@ export interface IParcelWorker {
 function initWorker(
   workerUrl: URL,
   options: {
-    previewHost: string;
     projectId: string;
+    previewHost?: string;
     workerOptions?: WorkerOptions;
   },
 ): IParcelWorker;
