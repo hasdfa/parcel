@@ -94,7 +94,7 @@ export function initWorker(
       return worker.getFsPaths();
     },
     preinstallPackages: (
-      dependencies: Record<string, string>,
+      dependencies: Record<string, string> = {},
       progress?: (msg: string | YarnProgressData) => void,
       options?: {rawProgress?: boolean},
     ): Promise<void> => {

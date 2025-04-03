@@ -7,6 +7,7 @@ export type File = {
   isEntry?: boolean;
 };
 export type FSMap = Map<string, File | FSMap>;
+export type FSFlatMap = Record<string, File>;
 export type FSList = Array<[string, File]>;
 
 export class FS implements Iterable<[string, File | FSMap]> {
