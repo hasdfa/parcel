@@ -464,8 +464,20 @@ async function bundle(
     writeProgress('Build success', 'success');
     return await collectResult(event, graphs, fs);
   } catch (error: any) {
-    writeProgress('Build failed', 'error');
     console.error(error, error.diagnostics);
+    writeProgress('Build failed', 'error');
+    writeProgress((error.message || error).toString(), 'error');
+    console.error('Diagnostics', error.diagnostics);
+    if (error.diagnostics) {
+      const rendred = await renderDiagnostics(fs, error.diagnostics).catch(
+        error => {
+          console.error('Error rendering diagnostics', error);
+          return error;
+        },
+      );
+      console.error('Rendering diagnostics', rendred);
+      writeProgress(rendred?.toString() ?? '', 'error');
+    }
 
     if (error.diagnostics) {
       return {
