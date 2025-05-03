@@ -1,4 +1,5 @@
 .cache/
+.next/
 .idea/
 .nyc_output/
 .parcel-cache/

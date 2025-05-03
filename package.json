@@ -42,6 +42,8 @@
   },
   "devDependencies": {
     "@babel/core": "^7.22.11",
+    "@babel/plugin-proposal-class-properties": "^7.18.6",
+    "@babel/plugin-proposal-decorators": "^7.27.1",
     "@khanacademy/flow-to-ts": "^0.5.2",
     "@napi-rs/cli": "^2.18.3",
     "@parcel/babel-register": "*",
@@ -84,6 +86,7 @@
     "scheduler": false
   },
   "dependencies": {
+    "p-queue": "^8.1.0",
     "patch-package": "^8.0.0"
   },
   "_": "See issue #9405 for the Vue problem",

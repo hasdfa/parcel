@@ -1,0 +1,117 @@
+{
+  "name": "@vraksha/parcel-browser",
+  "version": "2.0.0-alpha.1",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "dist",
+    "types",
+    "package.json"
+  ],
+  "targets": {
+    "@client": {
+      "source": "src/@client/index.ts",
+      "isLibrary": true,
+      "outputFormat": "esmodule",
+      "context": "browser"
+    },
+    "@worker": {
+      "source": "src/@worker/index.ts",
+      "context": "browser",
+      "outputFormat": "esmodule"
+    },
+    "@service-worker": {
+      "source": "src/@service-worker/index.ts",
+      "context": "browser",
+      "outputFormat": "esmodule"
+    }
+  },
+  "main": "./dist/@client/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/@client/index.d.ts",
+      "import": "./dist/@client/index.js",
+      "require": "./dist/@client/index.js",
+      "default": "./dist/@client/index.js"
+    },
+    "./worker": {
+      "types": "./dist/@worker/index.d.ts",
+      "import": "./dist/@worker/index.js"
+    },
+    "./service-worker": {
+      "types": "./dist/@service-worker/index.d.ts",
+      "import": "./dist/@service-worker/index.js"
+    },
+    "./package.json": {
+      "import": "./package.json",
+      "require": "./package.json"
+    }
+  },
+  "scripts": {
+    "build:types": "tsc",
+    "build": "rm -rf dist && yarn prepare && yarn build:types && PARCEL_BUILD_REPL=1 parcel build --no-source-maps",
+    "serve": "serve dist/ -c ../serve.json",
+    "prepare": "node write-commit.js",
+    "prepublishOnly": "yarn build"
+  },
+  "dependencies": {
+    "@mischnic/dot-svg": "^0.0.0",
+    "@mischnic/pako": "^1.0.10",
+    "@parcel/bundler-default": "^2.13.3",
+    "@parcel/compressor-raw": "^2.13.3",
+    "@parcel/core": "2.13.3",
+    "@parcel/fs": "2.13.3",
+    "@parcel/namer-default": "^2.13.3",
+    "@parcel/node-resolver-core": "^3.4.3",
+    "@parcel/optimizer-css": "^2.13.3",
+    "@parcel/optimizer-terser": "^2.13.3",
+    "@parcel/package-manager": "2.13.3",
+    "@parcel/packager-css": "^2.13.3",
+    "@parcel/packager-html": "^2.13.3",
+    "@parcel/packager-js": "^2.13.3",
+    "@parcel/packager-raw": "^2.13.3",
+    "@parcel/reporter-json": "^2.13.3",
+    "@parcel/resolver-default": "^2.13.3",
+    "@parcel/runtime-browser-hmr": "^2.13.3",
+    "@parcel/runtime-js": "^2.13.3",
+    "@parcel/runtime-react-refresh": "^2.13.3",
+    "@parcel/transformer-babel": "^2.13.3",
+    "@parcel/transformer-css": "^2.13.3",
+    "@parcel/transformer-html": "^2.13.3",
+    "@parcel/transformer-inline-string": "^2.13.3",
+    "@parcel/transformer-js": "^2.13.3",
+    "@parcel/transformer-json": "^2.13.3",
+    "@parcel/transformer-postcss": "^2.13.3",
+    "@parcel/transformer-posthtml": "^2.13.3",
+    "@parcel/transformer-raw": "^2.13.3",
+    "@parcel/transformer-react-refresh-wrap": "^2.13.3",
+    "@parcel/types": "^2.13.3",
+    "@parcel/utils": "^2.13.3",
+    "@vraksha/parcel-resolver-repl-runtimes": "^2.13.3",
+    "@vraksha/parceljs-nextjs-image-transformer": "^1.0.0",
+    "@vraksha/yarn-browser": "^0.0.5",
+    "buffer": "^6.0.3",
+    "comlink": "^4.3.1",
+    "fast-json-stable-stringify": "^2.1.0",
+    "filesize": "^10.1.6",
+    "idb": "^8.0.2",
+    "isomorphic-fetch": "^3.0.0",
+    "jszip": "^3.7.1",
+    "lodash": "^4.17.21",
+    "mobx": "^6.13.7",
+    "notepack.io": "^3.0.1",
+    "nullthrows": "^1.1.1",
+    "p-queue": "^8.1.0",
+    "semver": "^7.3.5",
+    "tsup": "^8.4.0"
+  },
+  "browserslist": "Chrome 75",
+  "devDependencies": {
+    "@types/lodash": "^4.17.15",
+    "eslint-config-react-app": "^7.0.1",
+    "sharp": "^0.33.5"
+  }
+}
