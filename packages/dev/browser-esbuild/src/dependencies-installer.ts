@@ -1,10 +1,10 @@
-import { openDB } from 'idb';
+import {openDB} from 'idb';
 import notepack from 'notepack.io';
 import PQueue from 'p-queue';
 import * as path from './helpers/path';
-import type { BaseFileSystemManager as FileSystem } from './file-system-manager';
+import type {BaseFileSystemManager as FileSystem} from './file-system-manager';
 
-const { Buffer } = require('buffer');
+const {Buffer} = require('buffer');
 
 const requestsQueue = new PQueue({
   concurrency: 10,
@@ -29,40 +29,71 @@ async function fetchWithRetry(
   }
 }
 
+function packagesHash(packages: Record<string, string>) {
+  const dependenciesRequest = Object.entries(packages)
+    .sort(($1, $2) => $1[0].localeCompare($2[0]))
+    .map(([name, version]) => `${name}@${version}`);
+  if (!dependenciesRequest) {
+    return '';
+  }
+
+  return Buffer.from(dependenciesRequest.join(';')).toString('base64');
+}
+
 const sandpackClient = {
   async resolvePackages(
     registryBaseUrl: string,
     packages: Record<string, string>,
+    packageJsonHash: string,
   ) {
-    const dependenciesRequest = Object.entries(packages).map(
-      ([name, version]) => `${name}@${version}`,
-    );
-    if (!dependenciesRequest) {
-      return {};
+    const newPackageJsonHash = packagesHash(packages);
+    if (newPackageJsonHash === packageJsonHash) {
+      return {
+        packageJsonHash: newPackageJsonHash,
+        dependencies: null,
+      };
     }
 
-    const dependeciesBase64 = Buffer.from(
-      dependenciesRequest.join(';'),
-    ).toString('base64');
-    const requestPath = `/v2/deps/${dependeciesBase64}`;
+    const requestPath = `/v2/deps/${newPackageJsonHash}`;
+    return Cache.withLocalCacheData(
+      requestPath,
+      async () => {
+        const response = await fetchWithRetry(
+          `${registryBaseUrl}${requestPath}`,
+        );
+        const responseBytes = await response.arrayBuffer();
 
-    const response = await fetchWithRetry(`${registryBaseUrl}${requestPath}`);
-    const responseBytes = await response.arrayBuffer();
+        const distTags: Record<string, string> = notepack.decode(responseBytes);
+        const dependencies: Record<string, string> = {};
+        const versions: Record<string, number> = {};
+        for (const [name, version] of Object.entries(distTags)) {
+          const splitted = name.split('@');
+          const major = +(splitted.pop() ?? '0');
+          const packageName = splitted.join('@');
 
-    const distTags: Record<string, string> = notepack.decode(responseBytes);
-    const resolvedPackages = Object.fromEntries(
-      Object.entries(distTags).map(([name, version]) => [
-        name.split('@').slice(0, -1).join('@'),
-        version,
-      ]),
+          const existing = versions[packageName];
+          if (!existing || major > existing) {
+            versions[packageName] = major;
+            dependencies[packageName] = version;
+          }
+        }
+
+        console.debug('[NPM] distTags', distTags);
+        console.debug('[NPM] resolved dependencies', dependencies);
+
+        return {
+          packageJsonHash: newPackageJsonHash,
+          dependencies: Object.fromEntries(
+            Object.entries(distTags).map(([name, version]) => {
+              return [name.split('@').slice(0, -1).join('@'), version];
+            }),
+          ),
+        };
+      },
+      async files => files,
     );
-
-    return resolvedPackages;
   },
-  async hasPackageFilesInCache(
-    packageName: string,
-    packageVersion: string,
-  ) {
+  async hasPackageFilesInCache(packageName: string, packageVersion: string) {
     const packageRequest = Buffer.from(
       `${packageName}@${packageVersion}`,
     ).toString('base64');
@@ -75,12 +106,6 @@ const sandpackClient = {
     packageName: string,
     packageVersion: string,
   ) {
-    // const packageRequest = Buffer.from(`${packageName}@${packageVersion}`).toString('base64');
-    // const response = await fetchWithRetry(`${registryBaseUrl}/v2/mod/${packageRequest}`);
-    // const responseBytes = await response.bytes();
-    // const files: Record<string, Buffer> = msgpack.decode(responseBytes);
-    // return files;
-
     const packageRequest = Buffer.from(
       `${packageName}@${packageVersion}`,
     ).toString('base64');
@@ -130,29 +155,41 @@ export class NPMInstaller {
     return options?.cwd || fs.cwd() || process.cwd();
   }
 
-  private static async getPackageJson(fs: FileSystem, options: NPMSpawnOptions) {
-    const packageJsonPath = path.join(
-      this.cwd(fs, options),
-      'package.json',
+  private static async getPackageJson(
+    fs: FileSystem,
+    options: NPMSpawnOptions,
+  ) {
+    const packageJsonPath = path.join(this.cwd(fs, options), 'package.json');
+    const content = await Promise.resolve(fs.readFile(packageJsonPath)).catch(
+      () => null,
     );
-    console.debug('[npm] packageJsonPath', packageJsonPath)
-    const content = await Promise.resolve(fs.readFile(packageJsonPath)).catch(() => null);
     return content ? JSON.parse(content) : null;
   }
 
-  public static async resolveDependencies(fs: FileSystem, options: NPMSpawnOptions) {
+  public static async resolveDependencies(
+    fs: FileSystem,
+    options: NPMSpawnOptions,
+  ) {
     const packageJson = await this.getPackageJson(fs, options);
+    console.debug('[npm] packageJson', packageJson);
     const allDependencies = {
       ...(packageJson?.dependencies || {}),
-      ...(packageJson?.devDependencies || {}),
+      // ...(packageJson?.devDependencies || {}),
       ...(packageJson?.peerDependencies || {}),
       ...(options?.dependencies || {}),
     };
 
-    return await sandpackClient.resolvePackages(
-      options.registryBaseUrl,
-      allDependencies,
-    );
+    const packageJsonHashPath = '/~system/package-json-hash';
+
+    const {dependencies, packageJsonHash} =
+      await sandpackClient.resolvePackages(
+        options.registryBaseUrl,
+        allDependencies,
+        fs.readFile(packageJsonHashPath),
+      );
+
+    fs.writeFile(packageJsonHashPath, packageJsonHash);
+    return dependencies;
   }
 
   public static async install(fs: FileSystem, options: NPMSpawnOptions) {
@@ -160,61 +197,57 @@ export class NPMInstaller {
     log('info', `> npm install`);
 
     const installTime = measureTime();
-    const packageJson = await this.getPackageJson(fs, options);
-    console.debug('[npm] packageJson', packageJson)
-
-    const restoreTime = measureTime();
-    log('info', `┌ Restoring cache`);
-    // const cacheDir = path.join(cwd, 'node_modules');
-    // await Cache.restoreCache(fs, cacheDir);
-    // await Cache.restoreLockfile(fs, cwd);
-    log('info', `└ Completed in ${restoreTime()}`);
-
-    const allDependencies = {
-      ...(packageJson?.dependencies || {}),
-      ...(packageJson?.devDependencies || {}),
-      ...(packageJson?.peerDependencies || {}),
-      ...(options?.dependencies || {}),
-    };
+    // const restoreTime = measureTime();
+    // log('info', `┌ Restoring cache`);
+    // // const cacheDir = path.join(cwd, 'node_modules');
+    // // await Cache.restoreCache(fs, cacheDir);
+    // // await Cache.restoreLockfile(fs, cwd);
+    // log('info', `└ Completed in ${restoreTime()}`);
 
     const nodeModulesPath = path.join('/node_modules');
     const scriptsPath = path.join(nodeModulesPath, '.scripts.json');
-    // if (!fs.existsSync(nodeModulesPath)) {
-    //   await fs.mkdirp(nodeModulesPath);
-    // }
 
     const resolutionTime = measureTime();
     log('info', `┌ Resolution step`);
-    const packages = await sandpackClient.resolvePackages(
-      options.registryBaseUrl,
-      allDependencies,
-    );
+    const packages = await this.resolveDependencies(fs, options);
     log('info', `└ Completed in ${resolutionTime()}`);
 
+    // Nothing to install
+    if (!packages) {
+      log('info', `Done in ${installTime()}`);
+      return;
+    }
+
     const scripts: Record<string, string> = {
-      ...(await Promise.resolve(fs.readFile(scriptsPath)).then(JSON.parse).catch(() => ({})) || {}),
+      ...((await Promise.resolve(fs.readFile(scriptsPath))
+        .then(JSON.parse)
+        .catch(() => ({}))) || {}),
     };
-    // const dirsToLink: [string, string][] = [];
 
     const fetchTime = measureTime();
     log('info', `┌ Fetch step`);
     await Promise.all(
-      Object.entries(packages).map(([packageName, packageVersion]) => requestsQueue.add(async () => {
-        const packagePath = path.join(nodeModulesPath, packageName);
-        // const cachePath = getPackageCachePath(packageName, packageVersion);
-        const cachePath = packagePath;
-        // dirsToLink.push([packagePath, cachePath]);
+      Object.entries(packages).map(([packageName, packageVersion]) =>
+        requestsQueue.add(async () => {
+          const packagePath = path.join(nodeModulesPath, packageName);
+          const cachePath = packagePath;
 
-        if (fs.exists(cachePath)) {
-          log(
-            'info',
-            `│ ${packageName}@npm:${packageVersion} found in the cache`,
-          );
-        } else {
-          if (await sandpackClient.hasPackageFilesInCache(
-            packageName,
-            packageVersion,
-          )) {
+          const existing = await Promise.resolve(
+            fs.readFile(`${packagePath}/package.json`),
+          ).catch(() => null);
+          if (existing) {
+            const existingJson = JSON.parse(existing);
+            if (existingJson.version === packageVersion) {
+              return;
+            }
+          }
+
+          if (
+            await sandpackClient.hasPackageFilesInCache(
+              packageName,
+              packageVersion,
+            )
+          ) {
             log(
               'info',
               `│ ${packageName}@npm:${packageVersion} found in the cache`,
@@ -234,43 +267,40 @@ export class NPMInstaller {
 
           for (const [baseFilePath, fileContent] of Object.entries(files)) {
             const filePath = path.join(cachePath, baseFilePath);
-            const dirPath = path.dirname(filePath);
-            // if (!fs.existsSync(dirPath)) {
-            //   await fs.mkdirp(dirPath);
-            // }
-
             const string = new TextDecoder().decode(fileContent);
             fs.writeFile(filePath, string);
           }
-        }
 
-        // TODO: gather "scripts" from all deps package.json
-        const pkgJsonText = await Promise.resolve(fs.readFile(path.join(cachePath, 'package.json'))).catch(() => null);
-        const pkgJson = pkgJsonText ? JSON.parse(pkgJsonText) : null;
-        if (pkgJson && pkgJson.bin) {
-          if (typeof pkgJson.bin === 'string') {
+          // TODO: gather "scripts" from all deps package.json
+          const pkgJsonText = await Promise.resolve(
+            fs.readFile(path.join(cachePath, 'package.json')),
+          ).catch(() => null);
+          const pkgJson = pkgJsonText ? JSON.parse(pkgJsonText) : null;
+          if (pkgJson && pkgJson.bin) {
+            if (typeof pkgJson.bin === 'string') {
+              scripts[pkgJson.name] = path.resolve(
+                packagePath,
+                pkgJson.bin as string,
+              );
+            } else if (typeof pkgJson.bin === 'object') {
+              Object.entries(pkgJson.bin).forEach(([name, bin]) => {
+                scripts[name] = path.resolve(packagePath, bin as string);
+              });
+            }
+          } else if (pkgJson && pkgJson.main) {
             scripts[pkgJson.name] = path.resolve(
               packagePath,
-              pkgJson.bin as string,
+              pkgJson.main as string,
             );
-          } else if (typeof pkgJson.bin === 'object') {
-            Object.entries(pkgJson.bin).forEach(([name, bin]) => {
-              scripts[name] = path.resolve(packagePath, bin as string);
-            });
           }
-        } else if (pkgJson && pkgJson.main) {
-          scripts[pkgJson.name] = path.resolve(
-            packagePath,
-            pkgJson.main as string,
-          );
-        }
-      })),
+        }),
+      ),
     );
     // await Cache.saveCache(fs, cacheDir);
     log('info', `└ Completed in ${fetchTime()}`);
 
-    const linkTime = measureTime();
-    log('info', `┌ Link step`);
+    // const linkTime = measureTime();
+    // log('info', `┌ Link step`);
 
     // Store scripts
     this.scriptsMap = scripts;
@@ -286,8 +316,8 @@ export class NPMInstaller {
     //   }
     //   fs.symlink(cachePath, packagePath);
     // }
+    // log('info', `└ Completed in ${linkTime()}`);
 
-    log('info', `└ Completed in ${linkTime()}`);
     log('info', `Done in ${installTime()}`);
   }
 
@@ -300,7 +330,7 @@ export class NPMInstaller {
     const scripts = packageJson?.scripts;
     const scriptPath = scripts?.[script];
     const [cmd, ...args] = scriptPath?.split(' ') || [];
-    return { cmd, args };
+    return {cmd, args};
   }
 
   // E.g. to found source file for `next` script
@@ -332,6 +362,8 @@ function getDB() {
   });
 }
 
+const localCache = new Map<string, any>();
+
 const Cache = {
   async isCached(request: string) {
     const db = await getDB();
@@ -350,11 +382,35 @@ const Cache = {
         return await transform(cachedData.data);
       }
     } catch (error) {
-      console.error('Error transforming cached data. Trying to get fresh data...', error);
+      console.error(
+        'Error transforming cached data. Trying to get fresh data...',
+        error,
+      );
     }
 
     const data = await getData();
     await db.put(IDB_STORE_SANDPACK_CDN, {request, data});
+    return transform(data);
+  },
+  async withLocalCacheData<T, R>(
+    request: string,
+    getData: () => Promise<T>,
+    transform: (data: T) => Promise<R>,
+  ): Promise<R> {
+    try {
+      const cachedData = localCache.get(request);
+      if (cachedData) {
+        return await transform(cachedData);
+      }
+    } catch (error) {
+      console.error(
+        'Error transforming cached data. Trying to get fresh data...',
+        error,
+      );
+    }
+
+    const data = await getData();
+    localCache.set(request, data);
     return transform(data);
   },
   // async savePartialCache(basePath: string, files: Record<string, Buffer>) {

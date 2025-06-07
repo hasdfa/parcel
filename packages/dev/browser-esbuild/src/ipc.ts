@@ -1,7 +1,8 @@
 // Credits: https://github.com/esbuild/esbuild.github.io/blob/main/src/try/ipc.ts
-import { emitter } from './global'
+import type {FormatMessagesOptions} from 'esbuild-wasm';
+import {emitter} from './global';
 
-export type IPCStatus = 'resolve' | 'reject' | 'progress'
+export type IPCStatus = 'resolve' | 'reject' | 'progress';
 
 export interface IPCInitOptions {
   esbuildVersion: string;
@@ -9,198 +10,225 @@ export interface IPCInitOptions {
 }
 
 export interface OutputFile {
-  readonly path: string
-  readonly contents: Uint8Array
+  readonly path: string;
+  readonly contents: Uint8Array;
 }
 
-export type IPCRequest = TransformRequest | BuildRequest | NpmInstallRequest
+export type IPCRequest = TransformRequest | BuildRequest | NpmInstallRequest;
 export type IPCResponse<Request extends IPCRequest = IPCRequest> =
   Request extends TransformRequest
     ? TransformResponse
     : Request extends BuildRequest
-      ? BuildResponse
-      : Request extends NpmInstallRequest
-        ? NpmInstallResponse
-        : TransformRequest & BuildRequest & NpmInstallRequest
+    ? BuildResponse
+    : Request extends NpmInstallRequest
+    ? NpmInstallResponse
+    : TransformRequest & BuildRequest & NpmInstallRequest;
 
 export interface TransformRequest {
-  command_: 'transform'
-  input_: string
-  options_: Record<string, any>
+  command_: 'transform';
+  input_: string;
+  options_: Record<string, any>;
+  formatOptions?: Partial<FormatMessagesOptions>;
 }
 
 export interface TransformResponse {
-  code_?: string
-  map_?: string
-  mangleCache_?: Record<string, string | boolean>
-  legalComments_?: string
-  stderr_?: string
-  duration_?: number
+  code_?: string;
+  map_?: string;
+  mangleCache_?: Record<string, string | boolean>;
+  legalComments_?: string;
+  stderr_?: string;
+  duration_?: number;
 }
 
 export interface BuildRequest {
-  command_: 'build'
-  input_: Record<string, string>
-  options_: Record<string, any>
+  command_: 'build';
+  input_: Record<string, string>;
+  options_: Record<string, any>;
+  formatOptions?: Partial<FormatMessagesOptions>;
 }
 
 export interface NpmInstallRequest {
-  command_: 'npm_install'
-  registryBaseUrl_: string
-  input_: Record<string, string>
-  cwd_?: string
+  command_: 'npm_install';
+  registryBaseUrl_: string;
+  input_: Record<string, string>;
+  cwd_?: string;
 }
 
-export interface NpmInstallResponse {
-}
+export interface NpmInstallResponse {}
 
 export interface BuildResponse {
-  outputFiles_?: OutputFile[]
-  metafile_?: Record<string, any>
-  mangleCache_?: Record<string, string | boolean>
-  stderr_?: string
-  duration_?: number
+  metafile_?: Record<string, any>;
+  outputFiles_: OutputFile[];
+  mangleCache_?: Record<string, string | boolean>;
+  duration_: number;
+  stderr_?: string;
 }
 
 interface Task {
-  message_: any
-  resolve_: (value: any) => void
-  abort_: () => void
+  message_: any;
+  resolve_: (value: any) => void;
+  abort_: () => void;
 }
 
-let workerText: Promise<string> | null = null
-let activeTask: Task | null = null
-let pendingTask: Task | null = null
+let workerText: Promise<string> | null = null;
+let activeTask: Task | null = null;
+let pendingTask: Task | null = null;
 
 // Waiting to a resolved function
-let waitingPromise: Record<string, {
-  resolve: (data: any) => void,
-  reject: (error: any) => void,
-  progress?: (data: any) => void,
-}> = {}
+let waitingPromise: Record<
+  string,
+  {
+    resolve: (data: any) => void;
+    reject: (error: any) => void;
+    progress?: (data: any) => void;
+  }
+> = {};
 
-let on_reload: (options: IPCInitOptions) => Promise<Worker> = async () => null as any
-emitter.on('reload', (options) => on_reload(options))
+let on_reload: (options: IPCInitOptions) => Promise<Worker> = async () =>
+  null as any;
+emitter.on('reload', options => on_reload(options));
 
 let workerPromise = new Promise<Worker>((resolve, reject) => {
-  on_reload = (options) => {
-    const reloadPromise = reloadWorker(options)
-    reloadPromise.then(resolve, reject)
-    on_reload = (options) => {
-      workerPromise.then((worker) => worker.terminate())
-      workerPromise = reloadWorker(options)
-      return workerPromise
-    }
-    return reloadPromise
-  }
-})
+  on_reload = options => {
+    const reloadPromise = reloadWorker(options);
+    reloadPromise.then(resolve, reject);
+    on_reload = options => {
+      workerPromise.then(worker => worker.terminate());
+      workerPromise = reloadWorker(options);
+      return workerPromise;
+    };
+    return reloadPromise;
+  };
+});
 
 const do_fetch: typeof fetch = (url, options) => {
-  emitter.status = `Fetching ${url}`
-  return fetch(url, options)
-}
+  emitter.status = `Fetching ${url}`;
+  return fetch(url, options);
+};
 
 async function packageFetch(subpath: string): Promise<Response> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort('Timeout'), 5000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort('Timeout'), 5000);
 
   // Try to fetch from one CDN, but fall back to another CDN if that fails
   try {
-    const response = await do_fetch(`https://cdn.jsdelivr.net/npm/${subpath}`)
+    const response = await do_fetch(`https://cdn.jsdelivr.net/npm/${subpath}`);
     if (response.ok) {
-      clearTimeout(timeout)
-      return response
+      clearTimeout(timeout);
+      return response;
     }
   } catch (err) {
-    console.error(err)
+    console.error(err);
   }
-  return do_fetch(`https://unpkg.com/${subpath}`)
+  return do_fetch(`https://unpkg.com/${subpath}`);
 }
 
 async function reloadWorker(options: IPCInitOptions): Promise<Worker> {
-  const { esbuildVersion: version, workerUrl } = options
+  const {esbuildVersion: version, workerUrl} = options;
 
-  let loadingFailure: string | undefined
-  emitter.status = `Loading esbuild ${version}…`
+  let loadingFailure: string | undefined;
+  emitter.status = `Loading esbuild ${version}…`;
 
   try {
-    if (activeTask) activeTask.abort_()
-    if (pendingTask) pendingTask.abort_()
-    activeTask = null
-    pendingTask = null
+    if (activeTask) activeTask.abort_();
+    if (pendingTask) pendingTask.abort_();
+    activeTask = null;
+    pendingTask = null;
 
     // "browser.min.js" was added in version 0.8.33
-    const [major, minor, patch] = version.split('.').map((x) => +x)
-    const min = major === 0 && (minor < 8 || (minor === 8 && patch < 33)) ? '' : '.min'
+    const [major, minor, patch] = version.split('.').map(x => +x);
+    const min =
+      major === 0 && (minor < 8 || (minor === 8 && patch < 33)) ? '' : '.min';
 
     const [workerJS, esbuildJS, esbuildWASM] = await Promise.all([
-      (workerText ||= fetch(workerUrl).then((r) => r.text())),
-      packageFetch(`esbuild-wasm@${version}/lib/browser${min}.js`).then((r) => r.text()),
-      packageFetch(`esbuild-wasm@${version}/esbuild.wasm`).then((r) => r.arrayBuffer()),
-    ])
-    setupLocal(esbuildJS, esbuildWASM.slice(0))
+      (workerText ||= fetch(workerUrl).then(r => r.text())),
+      packageFetch(`esbuild-wasm@${version}/lib/browser${min}.js`).then(r =>
+        r.text(),
+      ),
+      packageFetch(`esbuild-wasm@${version}/esbuild.wasm`).then(r =>
+        r.arrayBuffer(),
+      ),
+    ]);
+    setupLocal(esbuildJS, esbuildWASM.slice(0));
 
-    const i = workerJS.lastIndexOf('//# sourceMappingURL=')
-    const workerJSWithoutSourceMap = i >= 0 ? workerJS.slice(0, i) : workerJS
-    const parts = [esbuildJS, `\nvar polywasm=1;`, workerJSWithoutSourceMap]
-    const url = URL.createObjectURL(new Blob(parts, { type: 'application/javascript' }))
+    const i = workerJS.lastIndexOf('//# sourceMappingURL=');
+    const workerJSWithoutSourceMap = i >= 0 ? workerJS.slice(0, i) : workerJS;
+    const parts = [esbuildJS, `\nvar polywasm=1;`, workerJSWithoutSourceMap];
+    const url = URL.createObjectURL(
+      new Blob(parts, {type: 'application/javascript'}),
+    );
 
     return await new Promise<Worker>((resolve, reject) => {
-      const worker = new Worker(url, { type: 'module' })
-      worker.onmessage = (e) => {
-        worker.onmessage = null
+      const worker = new Worker(url, {type: 'module'});
+      worker.onmessage = e => {
+        worker.onmessage = null;
 
         if (e.data[0] === 'success') {
-          resolve(worker)
-          worker.onmessage = (e) => {
-            if (e.data && Array.isArray(e.data) && e.data.length === 3 && waitingPromise[e.data[0]]) {
+          resolve(worker);
+          worker.onmessage = e => {
+            if (
+              e.data &&
+              Array.isArray(e.data) &&
+              e.data.length === 3 &&
+              waitingPromise[e.data[0]]
+            ) {
               const [id, status, data] = e.data;
-              waitingPromise[id]?.[status]?.(data)
+              waitingPromise[id]?.[status]?.(data);
 
               // If the promise is resolved or rejected, remove it from the waiting list
               if (['resolve', 'reject'].includes(status)) {
-                delete waitingPromise[id]
+                delete waitingPromise[id];
               }
             }
-          }
+          };
 
-          console.debug('resolve', worker)
-          emitter.status = 'Loaded esbuild ' + version
-          emitter.ready = true
+          console.debug('resolve', worker);
+          emitter.status = 'Loaded esbuild ' + version;
+          emitter.ready = true;
         } else {
-          console.debug('reject', e.data)
-          reject(new Error('Failed to create worker'))
-          loadingFailure = e.data[1]
+          console.debug('reject', e.data);
+          reject(new Error('Failed to create worker'));
+          loadingFailure = e.data[1];
         }
-        URL.revokeObjectURL(url)
-      }
-      console.debug('worker.postMessage', ['setup', version, esbuildWASM], [esbuildWASM])
-      worker.postMessage(['setup', version, esbuildWASM], [esbuildWASM])
-    })
+        URL.revokeObjectURL(url);
+      };
+      console.debug(
+        'worker.postMessage',
+        ['setup', version, esbuildWASM],
+        [esbuildWASM],
+      );
+      worker.postMessage(['setup', version, esbuildWASM], [esbuildWASM]);
+    });
   } catch (err) {
-    emitter.status = loadingFailure || err + ''
-    console.error('reloadWorker', err)
-    throw err
+    emitter.status = loadingFailure || err + '';
+    console.error('reloadWorker', err);
+    throw err;
   }
 }
 
-let script: HTMLScriptElement | null = null
+let script: HTMLScriptElement | null = null;
 function setupLocal(js: string, wasm: ArrayBuffer): void {
-  const url = URL.createObjectURL(new Blob([js], { type: 'application/javascript' }))
-  if (script) script.remove()
-  script = document.createElement('script')
+  const url = URL.createObjectURL(
+    new Blob([js], {type: 'application/javascript'}),
+  );
+  if (script) script.remove();
+  script = document.createElement('script');
   script.onload = async () => {
-    const esbuild: typeof import('esbuild') = (window as any).esbuild
-    const options = { wasmURL: URL.createObjectURL(new Blob([wasm], { type: 'application/wasm' })) }
+    const esbuild: typeof import('esbuild') = (window as any).esbuild;
+    const options = {
+      wasmURL: URL.createObjectURL(
+        new Blob([wasm], {type: 'application/wasm'}),
+      ),
+    };
     if ((esbuild as any).startService) {
-      await (esbuild as any).startService(options)
+      await (esbuild as any).startService(options);
     } else {
-      await esbuild.initialize(options)
+      await esbuild.initialize(options);
     }
-    console.log('loaded esbuild @', esbuild.version, esbuild)
-  }
-  script.src = url
-  document.head.appendChild(script)
+    console.log('loaded esbuild @', esbuild.version, esbuild);
+  };
+  script.src = url;
+  document.head.appendChild(script);
 }
 
 export function sendIPC<Request extends IPCRequest>(
@@ -243,23 +271,23 @@ export function sendIPC<Request extends IPCRequest>(
   //   )
   // })
 
-  return workerPromise.then(
-    (worker) => {
-      const id = Math.random().toString(36).substring(2, 15)
-      const promise = new Promise<IPCResponse<Request>>((promiseResolve, promiseReject) => {
+  return workerPromise.then(worker => {
+    const id = Math.random().toString(36).substring(2, 15);
+    const promise = new Promise<IPCResponse<Request>>(
+      (promiseResolve, promiseReject) => {
         waitingPromise[id] = {
           progress,
           resolve: (data: any) => {
-            promiseResolve(data)
+            promiseResolve(data);
           },
           reject: (error: any) => {
-            promiseReject(error)
+            promiseReject(error);
           },
-        }
-      })
+        };
+      },
+    );
 
-      worker.postMessage([id, message])
-      return promise
-    }
-  )
+    worker.postMessage([id, message]);
+    return promise;
+  });
 }

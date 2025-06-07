@@ -1,6 +1,6 @@
 {
   "name": "@vraksha/esbuild-browser",
-  "version": "1.0.0-alpha.14",
+  "version": "1.0.0-beta.24",
   "license": "MIT",
   "publishConfig": {
     "access": "public"
@@ -21,7 +21,12 @@
     "./worker": {
       "types": "./dist/worker.d.ts",
       "require": "./dist/worker.js"
-    }
+    },
+    "./service-worker": {
+      "types": "./dist/service-worker.d.ts",
+      "require": "./dist/service-worker.js"
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
     "build": "rm -rf dist && mkdir dist && tsc && make",
@@ -31,7 +36,7 @@
   "dependencies": {
     "buffer": "^6.0.3",
     "comlink": "^4.4.2",
-    "esbuild-wasm": "^0.25.3",
+    "esbuild-wasm": "^0.25.4",
     "idb": "^8.0.2",
     "mobx": "^6.13.7",
     "node-path": "^0.0.3",
@@ -39,7 +44,7 @@
     "p-queue": "^8.1.0"
   },
   "devDependencies": {
-    "esbuild": "^0.25.3",
+    "esbuild": "^0.25.4",
     "typescript": "^5.5.4"
   }
 }

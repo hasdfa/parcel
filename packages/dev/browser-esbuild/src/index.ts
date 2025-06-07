@@ -1,11 +1,11 @@
-import { IPCInitOptions, sendIPC } from "./ipc"
-import { emitter } from "./global"
-import { FileSystemManager } from "./file-system-manager"
-import type { BuildOptions } from "esbuild-wasm"
+import {IPCInitOptions, sendIPC} from './ipc';
+import {emitter} from './global';
+import {FileSystemManager} from './file-system-manager';
+import type {BuildOptions, FormatMessagesOptions} from 'esbuild-wasm';
 
 export async function initWorker(options: IPCInitOptions) {
-  const fs = new FileSystemManager()
-  emitter.reload = { ...options }
+  const fs = new FileSystemManager();
+  emitter.reload = {...options};
 
   return {
     fs,
@@ -15,23 +15,33 @@ export async function initWorker(options: IPCInitOptions) {
       rawFiles?: Record<string, string>;
       progress?: (type: string, message: string) => void;
     }) => {
-      const response = await sendIPC({
-        registryBaseUrl_: props.registryBaseUrl,
-        command_: 'npm_install',
-        input_: props.rawFiles || fs.rawFiles,
-        cwd_: props.cwd,
-      }, props.progress
-        ? (data) => {
-          props.progress!(data.type, data.message);
-        } : undefined
-      )
+      const response = await sendIPC(
+        {
+          registryBaseUrl_: props.registryBaseUrl,
+          command_: 'npm_install',
+          input_: props.rawFiles || fs.rawFiles,
+          cwd_: props.cwd,
+        },
+        props.progress
+          ? data => {
+              props.progress!(data.type, data.message);
+            }
+          : undefined,
+      );
 
       return response;
     },
-    esbuild__bundle: async (options: BuildOptions, props?: { rawFiles?: Record<string, string> }) => {
+    esbuild__bundle: async (
+      options: BuildOptions,
+      props?: {
+        formatOptions?: Partial<FormatMessagesOptions>;
+        rawFiles?: Record<string, string>;
+      },
+    ) => {
       const response = await sendIPC({
         command_: 'build',
         input_: props?.rawFiles || fs.rawFiles,
+        formatOptions: props?.formatOptions,
         options_: {
           target: 'chrome67',
           format: 'esm',
@@ -52,11 +62,11 @@ export async function initWorker(options: IPCInitOptions) {
             ...(options.loader || {}),
           },
         },
-      })
+      });
 
       return response;
     },
-  }
+  };
 }
 
-export type EsbuildWorker = Awaited<ReturnType<typeof initWorker>>
+export type EsbuildWorker = Awaited<ReturnType<typeof initWorker>>;

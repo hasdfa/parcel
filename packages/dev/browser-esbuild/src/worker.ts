@@ -11,51 +11,57 @@
 /// <reference lib="DOM" />
 /// <reference lib="ESNext" />
 
-import type { IPCRequest, IPCResponse, IPCStatus } from './ipc'
-import { stderrSinceReset } from './helpers/fs'
-import { NPMInstaller } from './dependencies-installer'
-import { FileSystemManager } from './file-system-manager'
-import { setFilesBulk } from './helpers/fs'
+import type {IPCRequest, IPCResponse, IPCStatus} from './ipc';
+import {NPMInstaller} from './dependencies-installer';
+import {FileSystemManager} from './file-system-manager';
+import {setFilesBulk} from './helpers/fs';
 
-declare const esbuild: any
+declare const esbuild: any;
 
 interface API {
-  transform(input: string, options: any): Promise<any>
-  build(options: any): Promise<any>
+  transform(input: string, options: any): Promise<any>;
+  build(options: any): Promise<any>;
 
   // This was added in version 0.10.1
-  formatMessages?(messages: Message[], options: FormatMessagesOptions): Promise<any>
+  formatMessages?(
+    messages: Message[],
+    options: FormatMessagesOptions,
+  ): Promise<any>;
 }
 
 interface FormatMessagesOptions {
-  kind: 'error' | 'warning'
-  color?: boolean
-  terminalWidth?: number
+  kind: 'error' | 'warning';
+  color?: boolean;
+  terminalWidth?: number;
 }
 
 interface Message {
-  text: string
-  location: Location | null
-  notes?: Note[]
+  text: string;
+  location: Location | null;
+  notes?: Note[];
 }
 
 interface Note {
-  text: string
-  location: Location | null
+  text: string;
+  location: Location | null;
 }
 
 interface Location {
-  file: string
-  line: number
-  column: number
-  length: number
-  lineText: string
-  suggestion?: string
+  file: string;
+  line: number;
+  column: number;
+  length: number;
+  lineText: string;
+  suggestion?: string;
 }
 
 // Do the setup in an async function to capture errors thrown (e.g. "WebAssembly" doesn't exist)
-const setup = async ([_event, version, wasm]: ['setup', string, ArrayBuffer]): Promise<API> => {
-  const [major, minor, patch] = version.split('.').map((x) => +x)
+const setup = async ([_event, version, wasm]: [
+  'setup',
+  string,
+  ArrayBuffer,
+]): Promise<API> => {
+  const [major, minor, patch] = version.split('.').map(x => +x);
 
   // Versions 0.5.20 to 0.8.34 have a bug where "worker" doesn't work. This
   // means that the "build" API is broken (because we can't inject our file
@@ -63,93 +69,108 @@ const setup = async ([_event, version, wasm]: ['setup', string, ArrayBuffer]): P
   // these buggy versions.
   const hasBugWithWorker =
     major === 0 &&
-    ((minor === 5 && patch >= 20) || (minor >= 6 && minor <= 7) || (minor === 8 && patch <= 34))
+    ((minor === 5 && patch >= 20) ||
+      (minor >= 6 && minor <= 7) ||
+      (minor === 8 && patch <= 34));
 
   const options: Record<string, any> = {
     // This uses "wasmURL" instead of "wasmModule" because "wasmModule" was added in version 0.14.32
-    wasmURL: URL.createObjectURL(new Blob([wasm], { type: 'application/wasm' })),
-  }
+    wasmURL: URL.createObjectURL(new Blob([wasm], {type: 'application/wasm'})),
+  };
 
   // Avoid triggering an esbuild bug that causes all output to be empty
   if (!hasBugWithWorker) {
-    options.worker = false
+    options.worker = false;
   }
 
   // Use the "startService" API before version 0.9.0
   if (esbuild.startService) {
-    await esbuild.startService(options)
+    await esbuild.startService(options);
   } else {
     // Otherwise use the "initialize" API
-    await esbuild.initialize(options)
+    await esbuild.initialize(options);
   }
 
   // Warm up
   if (esbuild.transform) {
-    await esbuild.transform('let a = 1').catch(() => void 0)
+    await esbuild.transform('let a = 1').catch(() => void 0);
   }
 
-  return esbuild
-}
+  return esbuild;
+};
 
-const perf: { now(): number } = typeof performance !== 'undefined' ? performance : Date
+const perf: {now(): number} =
+  typeof performance !== 'undefined' ? performance : Date;
 
-const formatMessages = (api: API, messages: Message[], options: FormatMessagesOptions): Promise<string[]> => {
-  if (api.formatMessages) return api.formatMessages(messages, options)
+const formatMessages = (
+  api: API,
+  messages: Message[],
+  options: FormatMessagesOptions,
+): Promise<string[]> => {
+  if (api.formatMessages) return api.formatMessages(messages, options);
 
   // Do something reasonable for version 0.10.0 and earlier
   // cspell: disable
-  const format = (kind: string, text: string, location: Location | null): string => {
-    let result = kind === 'note' ? '   ' : '\x1B[1m > '
-    if (location) result += `${location.file}:${location.line}:${location.column}: `
+  const format = (
+    kind: string,
+    text: string,
+    location: Location | null,
+  ): string => {
+    let result = kind === 'note' ? '   ' : '\x1B[1m > ';
+    if (location)
+      result += `${location.file}:${location.line}:${location.column}: `;
     result +=
       kind === 'error'
         ? '\x1B[31merror:\x1B[1m '
         : kind === 'warning'
         ? '\x1B[35mwarning:\x1B[1m '
-        : '\x1B[1mnote:\x1B[0m '
-    result += text + '\x1B[0m\n'
+        : '\x1B[1mnote:\x1B[0m ';
+    result += text + '\x1B[0m\n';
     if (location) {
-      const { line, column, length, lineText } = location
-      const prefix = line.toString().padStart(5)
+      const {line, column, length, lineText} = location;
+      const prefix = line.toString().padStart(5);
       result +=
         `\x1B[37m${prefix} │ ${lineText.slice(0, column)}` +
         `\x1B[32m${lineText.slice(column, column + length)}` +
         `\x1B[37m${lineText.slice(column + length)}\n` +
         `${' '.repeat(prefix.length)} ╵ \x1B[32m${' '.repeat(column)}${
           length > 1 ? '~'.repeat(length) : '^'
-        }\x1B[0m\n`
+        }\x1B[0m\n`;
     }
-    return result
-  }
+    return result;
+  };
   // cspell: enable
   return Promise.resolve(
-    messages.map((msg) => {
-      let result = format(options.kind, msg.text, msg.location)
+    messages.map(msg => {
+      let result = format(options.kind, msg.text, msg.location);
       for (const note of msg.notes || []) {
-        result += format('note', note.text, note.location)
+        result += format('note', note.text, note.location);
       }
-      return result + '\n'
+      return result + '\n';
     }),
-  )
-}
+  );
+};
 
-const handler = function<R extends IPCRequest>(this: API, e: MessageEvent<[string, R]>) {
+const handler = function <R extends IPCRequest>(
+  this: API,
+  e: MessageEvent<[string, R]>,
+) {
   const respondWithError = (
     respond: (status: IPCStatus, response: IPCResponse<IPCRequest>) => void,
-    err: Error & { errors?: any[]; warnings?: any[] },
+    err: Error & {errors?: any[]; warnings?: any[]},
   ): void => {
-    let errors = err && err.errors
-    const warnings = err && err.warnings
-    if (!errors && !warnings) errors = [{ text: err + '' }]
+    let errors = err && err.errors;
+    const warnings = err && err.warnings;
+    if (!errors && !warnings) errors = [{text: err + ''}];
     Promise.all([
-      errors ? formatMessages(this, errors, { kind: 'error', color }) : [],
-      warnings ? formatMessages(this, warnings, { kind: 'warning', color }) : [],
+      errors ? formatMessages(this, errors, {kind: 'error', color}) : [],
+      warnings ? formatMessages(this, warnings, {kind: 'warning', color}) : [],
     ]).then(([errors, warnings]) => {
-      respond('reject', {
-        stderr_: mergeStderrStreams([...errors, ...warnings], stderrSinceReset),
-      })
-    })
-  }
+      respond('resolve', {
+        stderr_: mergeStderrStreams([...errors, ...warnings], ''),
+      });
+    });
+  };
 
   // There are two sources of log information: the log messages returned through
   // the API and the stderr stream from WebAssembly. The returned log messages
@@ -161,49 +182,61 @@ const handler = function<R extends IPCRequest>(this: API, e: MessageEvent<[strin
     for (let i = 0; i < formatted.length; ++i) {
       if (stderr.includes(formatted[i])) {
         // Try with escape codes
-        formatted[i] = ''
+        formatted[i] = '';
       } else {
         // Try without escape codes
-        const replaced = formatted[i].replace(/\x1B\[[^m]*m/g, '')
-        const index = stderr.indexOf(replaced)
+        const replaced = formatted[i].replace(/\x1B\[[^m]*m/g, '');
+        const index = stderr.indexOf(replaced);
         if (index >= 0) {
-          stderr = stderr.slice(0, index) + formatted[i] + stderr.slice(index + replaced.length)
-          formatted[i] = ''
+          stderr =
+            stderr.slice(0, index) +
+            formatted[i] +
+            stderr.slice(index + replaced.length);
+          formatted[i] = '';
         }
       }
     }
-    return formatted.filter(Boolean).join('') + stderr
-  }
+    return formatted.filter(Boolean).join('') + stderr;
+  };
 
-  const finish = (warnings: any[], done: (stderr: string) => void): void => {
+  const finish = (
+    warnings: any[],
+    options: Partial<FormatMessagesOptions> | undefined,
+    done: (stderr: string) => void,
+  ): void => {
     if (warnings.length) {
-      formatMessages(this, warnings, { kind: 'warning', color }).then((formatted) =>
-        done(mergeStderrStreams(formatted, stderrSinceReset)),
-      )
+      formatMessages(this, warnings, {
+        kind: 'warning',
+        color,
+        ...(options || {}),
+      }).then(formatted => done(mergeStderrStreams(formatted, '')));
     } else {
-      done(stderrSinceReset)
+      done('');
     }
-  }
+  };
 
-  const [requestId, request]: [string, IPCRequest] = e.data
-  console.debug('[worker] request', [requestId, request])
+  const [requestId, request]: [string, IPCRequest] = e.data;
+  // console.debug('[worker] request', [requestId, request])
 
-  const respond: (status: IPCStatus, response: IPCResponse<IPCRequest>) => void = (status, response) => {
-    console.debug('[worker] respond', [requestId, status, response])
-    return postMessage([requestId, status, response])
-  }
-  let start: number
-  let color = true
+  const respond: (
+    status: IPCStatus,
+    response: IPCResponse<IPCRequest>,
+  ) => void = (status, response) => {
+    // console.debug('[worker] respond', [requestId, status, response])
+    return postMessage([requestId, status, response]);
+  };
+  let start: number;
+  let color = true;
 
   try {
     // Transform API
     if (request.command_ === 'transform') {
-      if (request.options_.color === false) color = false
-      setFilesBulk({})
-      start = perf.now()
+      if (request.options_.color === false) color = false;
+      setFilesBulk({});
+      start = perf.now();
       this.transform(request.input_, request.options_).then(
-        ({ code, map, js, jsSourceMap, warnings, mangleCache, legalComments }) =>
-          finish(warnings, (stderr: string) =>
+        ({code, map, js, jsSourceMap, warnings, mangleCache, legalComments}) =>
+          finish(warnings, request.formatOptions, (stderr: string) =>
             respond('resolve', {
               // "code" and "map" were "js" and "jsSourceMap" before version 0.8.0
               code_: code ?? js,
@@ -214,77 +247,86 @@ const handler = function<R extends IPCRequest>(this: API, e: MessageEvent<[strin
               duration_: perf.now() - start,
             }),
           ),
-        (err) => respondWithError(respond, err),
-      )
+        err => respondWithError(respond, err),
+      );
     }
 
     // Build API
     else if (request.command_ === 'build') {
-      if (request.options_.color === false) color = false
-      setFilesBulk(request.input_)
-      const outdir = '/dist/'
+      if (request.options_.color === false) color = false;
+      setFilesBulk(request.input_);
+      const outdir = '/dist/';
 
-      start = perf.now()
+      start = perf.now();
       this.build({
         ...request.options_,
         outdir,
       }).then(
-        ({ warnings, outputFiles, metafile, mangleCache }) =>
-          finish(warnings, (stderr: string) =>
-            respond('resolve', {
-              outputFiles_: outputFiles.map(({ path, contents }: any) => ({
+        ({warnings, outputFiles, metafile, mangleCache}) =>
+          finish(warnings, request.formatOptions, (stderr: string) => {
+            return respond('resolve', {
+              outputFiles_: outputFiles.map(({path, contents}: any) => ({
                 path: path.slice(outdir.length),
                 contents,
               })),
               metafile_: metafile,
               mangleCache_: mangleCache,
-              stderr_: stderr,
               duration_: perf.now() - start,
-            }),
-          ),
-        (err) => respondWithError(respond, err),
-      )
+              stderr_: stderr,
+            });
+          }),
+        err => respondWithError(respond, err),
+      );
     }
 
     // Npm Install API
     else if (request.command_ === 'npm_install') {
-      const fs = new FileSystemManager()
-      fs.setFiles(Object.fromEntries(Object.entries(request.input_).map(([path, file]) => [path, { contents: file } as any])))
+      const fs = new FileSystemManager();
+      fs.setFiles(
+        Object.fromEntries(
+          Object.entries(request.input_).map(([path, file]) => [
+            path,
+            {contents: file} as any,
+          ]),
+        ),
+      );
+      console.debug('[npm] install', {fs: Object.keys(fs.rawFiles)});
 
       NPMInstaller.install(fs, {
         registryBaseUrl: request.registryBaseUrl_,
         cwd: request.cwd_,
         reported: (type: 'info' | 'error', message: string) => {
-          console.debug('[npm] progress', [type, message])
           respond('progress', {
             type,
             message,
-          })
+          });
         },
-      }).then(() => {
-        setFilesBulk(fs.rawFiles);
+      })
+        .then(() => {
+          setFilesBulk(fs.rawFiles);
 
-        respond('resolve', {
-          status_: 'success',
+          respond('resolve', {
+            status_: 'success',
+          });
         })
-      }).catch((err) => respondWithError(respond, err))
+        .catch(err => respondWithError(respond, err));
     }
   } catch (err: any) {
-    respondWithError(respond, err)
+    respondWithError(respond, err);
   }
-}
+};
 
 onmessage = async (e: MessageEvent<['setup', string, ArrayBuffer]>) => {
   if (e.data[0] !== 'setup') {
-    return
+    return;
   }
 
   try {
-    const api = await setup(e.data)
-    onmessage = handler.bind(api)
-    postMessage(['success'])
+    const api = await setup(e.data);
+    onmessage = handler.bind(api);
+    postMessage(['success']);
   } catch (err) {
-    console.error(err)
-    postMessage(['failure', err + ''])
+    console.error(err);
+    postMessage(['failure', err + '']);
   }
-}
+};
