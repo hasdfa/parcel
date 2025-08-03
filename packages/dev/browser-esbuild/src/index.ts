@@ -1,4 +1,4 @@
-import {BuildRequest, BuildResponse, IPCInitOptions, sendIPC} from './ipc';
+import {IPCInitOptions, sendIPC} from './ipc';
 import {emitter} from './global';
 import {FileSystemManager} from './file-system-manager';
 import type {BuildOptions, FormatMessagesOptions} from 'esbuild-wasm';
@@ -22,15 +22,11 @@ export async function initWorker(options: IPCInitOptions) {
           input_: props.rawFiles || fs.rawFiles,
           cwd_: props.cwd,
         },
-        {
-          ...(props.progress
-            ? {
-                progress: (data: any) => {
-                  props.progress!(data.type, data.message);
-                },
-              }
-            : {}),
-        },
+        props.progress
+          ? data => {
+              props.progress!(data.type, data.message);
+            }
+          : undefined,
       );
 
       return response;
@@ -40,62 +36,35 @@ export async function initWorker(options: IPCInitOptions) {
       props?: {
         formatOptions?: Partial<FormatMessagesOptions>;
         rawFiles?: Record<string, string>;
-        postprocess?: Omit<
-          NonNullable<BuildRequest['postprocess']>,
-          'filePatches'
-        > & {
-          filePatches?: Record<string, (contents: string) => string>;
-        };
-        upload?: NonNullable<BuildRequest['upload']>;
       },
     ) => {
-      const response = await sendIPC(
-        {
-          command_: 'build',
-          input_: props?.rawFiles || fs.rawFiles,
-          formatOptions: props?.formatOptions,
-          options_: {
-            target: 'chrome67',
-            format: 'esm',
-            splitting: true,
-            bundle: true,
-            sourcemap: true,
-            minify: false,
-            ...options,
-            loader: {
-              '.html': 'copy',
-              '.svg': 'file',
-              '.png': 'file',
-              '.jpg': 'file',
-              '.jpeg': 'file',
-              '.gif': 'file',
-              '.ico': 'file',
-              '.webp': 'file',
-              ...(options.loader || {}),
-            },
-          },
-          upload: props?.upload,
-          ...((props?.postprocess
-            ? {
-                postprocess: {
-                  filePolyfills: props.postprocess.filePolyfills,
-                  ...(props.postprocess.filePatches
-                    ? {filePatches: Object.keys(props.postprocess.filePatches)}
-                    : {}),
-                },
-              }
-            : {}) as any),
-        },
-        {
-          'postprocess@file-patch': ([path, contents]: [string, string]) => {
-            return props?.postprocess?.filePatches?.[path]
-              ? props.postprocess.filePatches[path](contents)
-              : contents;
+      const response = await sendIPC({
+        command_: 'build',
+        input_: props?.rawFiles || fs.rawFiles,
+        formatOptions: props?.formatOptions,
+        options_: {
+          target: 'chrome67',
+          format: 'esm',
+          splitting: true,
+          bundle: true,
+          sourcemap: true,
+          minify: false,
+          ...options,
+          loader: {
+            '.html': 'copy',
+            '.svg': 'file',
+            '.png': 'file',
+            '.jpg': 'file',
+            '.jpeg': 'file',
+            '.gif': 'file',
+            '.ico': 'file',
+            '.webp': 'file',
+            ...(options.loader || {}),
           },
         },
-      );
+      });
 
-      return response as BuildResponse;
+      return response;
     },
   };
 }

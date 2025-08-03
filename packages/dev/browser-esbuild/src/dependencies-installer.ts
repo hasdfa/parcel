@@ -78,6 +78,9 @@ const sandpackClient = {
           }
         }
 
+        console.debug('[NPM] distTags', distTags);
+        console.debug('[NPM] resolved dependencies', dependencies);
+
         return {
           packageJsonHash: newPackageJsonHash,
           dependencies: Object.fromEntries(

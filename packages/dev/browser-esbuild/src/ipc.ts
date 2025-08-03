@@ -2,7 +2,7 @@
 import type {FormatMessagesOptions} from 'esbuild-wasm';
 import {emitter} from './global';
 
-export type IPCStatus = 'resolve' | 'reject' | string;
+export type IPCStatus = 'resolve' | 'reject' | 'progress';
 
 export interface IPCInitOptions {
   esbuildVersion: string;
@@ -45,15 +45,6 @@ export interface BuildRequest {
   input_: Record<string, string>;
   options_: Record<string, any>;
   formatOptions?: Partial<FormatMessagesOptions>;
-  postprocess?: {
-    type?: 'json' | 'binary';
-    filePatches?: string[];
-    filePolyfills?: Record<string, string>;
-  };
-  upload?: {
-    projectId: string;
-    serviceWorkerOrigin: string;
-  };
 }
 
 export interface NpmInstallRequest {
@@ -66,15 +57,11 @@ export interface NpmInstallRequest {
 export interface NpmInstallResponse {}
 
 export interface BuildResponse {
-  files?: Record<string, string>;
-  filesBinary?: ArrayBuffer;
-  duration?: number;
-  stderr?: string;
-  // metafile_?: Record<string, any>;
-  // outputFiles_: OutputFile[];
-  // mangleCache_?: Record<string, string | boolean>;
-  // duration_: number;
-  // stderr_?: string;
+  metafile_?: Record<string, any>;
+  outputFiles_: OutputFile[];
+  mangleCache_?: Record<string, string | boolean>;
+  duration_: number;
+  stderr_?: string;
 }
 
 interface Task {
@@ -93,7 +80,8 @@ let waitingPromise: Record<
   {
     resolve: (data: any) => void;
     reject: (error: any) => void;
-  } & Record<string, (data: any) => Promise<any> | any>
+    progress?: (data: any) => void;
+  }
 > = {};
 
 let on_reload: (options: IPCInitOptions) => Promise<Worker> = async () =>
@@ -177,7 +165,7 @@ async function reloadWorker(options: IPCInitOptions): Promise<Worker> {
 
         if (e.data[0] === 'success') {
           resolve(worker);
-          worker.onmessage = async e => {
+          worker.onmessage = e => {
             if (
               e.data &&
               Array.isArray(e.data) &&
@@ -185,15 +173,7 @@ async function reloadWorker(options: IPCInitOptions): Promise<Worker> {
               waitingPromise[e.data[0]]
             ) {
               const [id, status, data] = e.data;
-              try {
-                const result = await waitingPromise[id]?.[status]?.(data);
-                if (!['resolve', 'reject'].includes(status)) {
-                  worker.postMessage([id, '@result@', result]);
-                }
-              } catch (err) {
-                worker.postMessage([id, '@result@failed', err]);
-                console.error('Error in waitingPromise', err);
-              }
+              waitingPromise[id]?.[status]?.(data);
 
               // If the promise is resolved or rejected, remove it from the waiting list
               if (['resolve', 'reject'].includes(status)) {
@@ -245,6 +225,7 @@ function setupLocal(js: string, wasm: ArrayBuffer): void {
     } else {
       await esbuild.initialize(options);
     }
+    console.log('loaded esbuild @', esbuild.version, esbuild);
   };
   script.src = url;
   document.head.appendChild(script);
@@ -252,15 +233,50 @@ function setupLocal(js: string, wasm: ArrayBuffer): void {
 
 export function sendIPC<Request extends IPCRequest>(
   message: Request,
-  // progress?: (data: any) => void,
-  events?: Record<string, (data: any) => Promise<any> | any>,
+  progress?: (data: any) => void,
 ): Promise<IPCResponse<Request>> {
+  // console.log('sendIPC', message)
+
+  // function activateTask(worker: Worker, task: Task): void {
+  //   console.log('activateTask', worker, task)
+
+  //   if (activeTask) {
+  //     if (pendingTask) pendingTask.abort_()
+  //     pendingTask = task
+  //   } else {
+  //     activeTask = task
+  //     worker.onmessage = (e) => {
+  //       worker.onmessage = null
+  //       task.resolve_(e.data)
+  //       activeTask = null
+  //       if (pendingTask) {
+  //         activateTask(worker, pendingTask)
+  //         pendingTask = null
+  //       }
+  //     }
+  //     console.log('postMessage', task.message_)
+  //     worker.postMessage(task.message_)
+  //   }
+  // }
+
+  // return new Promise((resolve, reject) => {
+  //   workerPromise.then(
+  //     (worker) =>
+  //       activateTask(worker, {
+  //         message_: message,
+  //         resolve_: resolve,
+  //         abort_: () => reject(new Error('Task aborted')),
+  //       }),
+  //     reject,
+  //   )
+  // })
+
   return workerPromise.then(worker => {
     const id = Math.random().toString(36).substring(2, 15);
     const promise = new Promise<IPCResponse<Request>>(
       (promiseResolve, promiseReject) => {
         waitingPromise[id] = {
-          ...(events || {}),
+          progress,
           resolve: (data: any) => {
             promiseResolve(data);
           },

@@ -11,14 +11,12 @@
 /// <reference lib="DOM" />
 /// <reference lib="ESNext" />
 
-import {Buffer} from 'buffer';
 import type {IPCRequest, IPCResponse, IPCStatus} from './ipc';
 import {NPMInstaller} from './dependencies-installer';
 import {FileSystemManager} from './file-system-manager';
 import {setFilesBulk} from './helpers/fs';
 
 declare const esbuild: any;
-const textEncoder = new TextEncoder();
 
 interface API {
   transform(input: string, options: any): Promise<any>;
@@ -153,37 +151,10 @@ const formatMessages = (
   );
 };
 
-const waitingPromises: Record<
-  string,
-  {
-    resolve: (data: any) => void;
-    reject: (error: any) => void;
-  }
-> = {};
-
 const handler = function <R extends IPCRequest>(
   this: API,
   e: MessageEvent<[string, R]>,
 ) {
-  if (e.data && (e.data as any)[1] === '@result@') {
-    const requestId = (e.data as any)[0];
-    const data = (e.data as any)[2];
-    const promise = waitingPromises[requestId];
-    if (promise) {
-      promise.resolve(data);
-    }
-    return;
-  }
-  if (e.data && (e.data as any)[1] === '@result@failed') {
-    const requestId = (e.data as any)[0];
-    const error = (e.data as any)[2];
-    const promise = waitingPromises[requestId];
-    if (promise) {
-      promise.reject(error);
-    }
-    return;
-  }
-
   const respondWithError = (
     respond: (status: IPCStatus, response: IPCResponse<IPCRequest>) => void,
     err: Error & {errors?: any[]; warnings?: any[]},
@@ -228,19 +199,19 @@ const handler = function <R extends IPCRequest>(
     return formatted.filter(Boolean).join('') + stderr;
   };
 
-  const finish = async (
+  const finish = (
     warnings: any[],
     options: Partial<FormatMessagesOptions> | undefined,
     done: (stderr: string) => void,
-  ): Promise<void> => {
+  ): void => {
     if (warnings.length) {
-      return formatMessages(this, warnings, {
+      formatMessages(this, warnings, {
         kind: 'warning',
         color,
         ...(options || {}),
       }).then(formatted => done(mergeStderrStreams(formatted, '')));
     } else {
-      return done('');
+      done('');
     }
   };
 
@@ -250,25 +221,9 @@ const handler = function <R extends IPCRequest>(
   const respond: (
     status: IPCStatus,
     response: IPCResponse<IPCRequest>,
-    options?: StructuredSerializeOptions,
-  ) => void = (status, response, options) => {
+  ) => void = (status, response) => {
     // console.debug('[worker] respond', [requestId, status, response])
-    return postMessage([requestId, status, response], options);
-  };
-  const respondWithResult: (
-    status: IPCStatus,
-    response: IPCResponse<IPCRequest>,
-    timeout?: number,
-    options?: StructuredSerializeOptions,
-  ) => Promise<any> = (status, response, timeout = 5000, options) => {
-    const requestId = Math.random().toString(36).substring(2, 15);
-    const promise = new Promise((resolve, reject) => {
-      waitingPromises[requestId] = {resolve, reject};
-      setTimeout(() => reject(new Error('Timeout')), timeout);
-    });
-
-    postMessage([requestId, status, response], options);
-    return promise;
+    return postMessage([requestId, status, response]);
   };
   let start: number;
   let color = true;
@@ -301,74 +256,24 @@ const handler = function <R extends IPCRequest>(
       if (request.options_.color === false) color = false;
       setFilesBulk(request.input_);
       const outdir = '/dist/';
-      const outdirLength = outdir.length;
 
       start = perf.now();
       this.build({
         ...request.options_,
         outdir,
       }).then(
-        ({warnings, outputFiles}) =>
-          finish(warnings, request.formatOptions, async (stderr: string) => {
-            const files: Record<string, string> = {};
-            const {filePolyfills, filePatches} = request.postprocess || {};
-            const patchFile = filePatches
-              ? async (path: string, contents: string) => {
-                  if (filePatches.includes(path)) {
-                    const result = await respondWithResult(
-                      'postprocess@file-patch',
-                      [path, contents],
-                    ).catch(() => null);
-                    return result ?? contents;
-                  }
-                  return contents;
-                }
-              : (_: string, contents: string) => contents;
-
-            for (const {path, contents} of outputFiles) {
-              const newPath = path.slice(outdirLength);
-              const strcontent = Buffer.from(contents).toString('utf-8');
-              files[newPath] =
-                (await patchFile?.(newPath, strcontent)) ?? strcontent;
-            }
-
-            Object.entries(filePolyfills || {}).forEach(([path, patch]) => {
-              if (!files[path]) files[path] = patch;
+        ({warnings, outputFiles, metafile, mangleCache}) =>
+          finish(warnings, request.formatOptions, (stderr: string) => {
+            return respond('resolve', {
+              outputFiles_: outputFiles.map(({path, contents}: any) => ({
+                path: path.slice(outdir.length),
+                contents,
+              })),
+              metafile_: metafile,
+              mangleCache_: mangleCache,
+              duration_: perf.now() - start,
+              stderr_: stderr,
             });
-
-            // if (request.upload) {
-            //   const { serviceWorkerOrigin, projectId } = request.upload;
-            //   await fetch(`${serviceWorkerOrigin}/__build/${projectId}/upload`, {
-            //     method: 'PUT',
-            //     headers: {
-            //       'Content-Type': 'application/json',
-            //     },
-            //     body: JSON.stringify(files),
-            //   });
-            // }
-
-            const filesBinary =
-              request.postprocess?.type === 'binary'
-                ? (() => {
-                    const jsonString = JSON.stringify(files);
-                    const uint8Array = textEncoder.encode(jsonString);
-                    return uint8Array.buffer;
-                  })()
-                : undefined;
-
-            return respond(
-              'resolve',
-              {
-                ...(request.postprocess?.type === 'binary'
-                  ? {filesBinary}
-                  : {files}),
-                duration: perf.now() - start,
-                stderr,
-              },
-              {
-                transfer: filesBinary ? [filesBinary] : undefined,
-              },
-            );
           }),
         err => respondWithError(respond, err),
       );

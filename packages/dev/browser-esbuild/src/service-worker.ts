@@ -1,15 +1,18 @@
 /// <reference lib="webworker" />
 
 // Store for uploaded files
-const fileStore = new Map<
-  string,
-  Record<string, string | Buffer | ArrayBuffer>
->();
+const fileStore = new Map();
 
 const SECURITY_HEADERS = {
   'Cross-Origin-Embedder-Policy': 'require-corp',
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Resource-Policy': 'cross-origin',
+  'content-security-policy':
+    "default-src * data: mediastream: blob: filesystem: about: ws: wss: 'unsafe-eval' 'wasm-unsafe-eval' 'unsafe-inline'; script-src * data: blob: 'unsafe-inline' 'unsafe-eval'; script-src-elem * data: blob: 'unsafe-inline'; connect-src * data: blob: 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; media-src * data: blob: 'unsafe-inline'; frame-src * data: blob: ; style-src * data: blob: 'unsafe-inline'; font-src * data: blob: 'unsafe-inline'; frame-ancestors *;",
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'SAMEORIGIN',
+  'x-nf-request-id': '01K1K2GYTJFG0PBG936G3ABJEE',
+  'x-xss-protection': '1; mode=block',
 };
 
 // Helper function to determine content type based on file extension
@@ -37,59 +40,49 @@ function getCacheName(projectId) {
   return `esbuild-files-${projectId}`;
 }
 
-async function uploadFiles(
-  projectId: string,
-  files: Record<string, string | Buffer | ArrayBuffer>,
-) {
-  // Store files in memory
-  fileStore.set(projectId, files);
-
-  // Store files in persistent cache
-  // const cache = await caches.open(getCacheName(projectId));
-  // // Remove old cache entries for this project
-  // const keys = await cache.keys();
-  // await Promise.all(keys.map(async (request) => {
-  //   await cache.delete(request);
-  // }));
-  //
-  // Add new files
-  // Note: we don't await this promise, because it's not needed for the upload to complete
-  // Promise.all(Object.entries(files).map(async ([filePath, fileContent]) => {
-  //   const url = `/__build/${projectId}/${filePath}`;
-  //   // Ensure fileContent is a valid BodyInit (string, Blob, ArrayBuffer, etc.)
-  //   let body: BodyInit;
-  //   if (
-  //     typeof fileContent === 'string' ||
-  //     fileContent instanceof Blob ||
-  //     fileContent instanceof ArrayBuffer
-  //   ) {
-  //     body = fileContent;
-  //   } else if (fileContent instanceof Uint8Array) {
-  //     body = fileContent;
-  //   } else {
-  //     // Fallback: try to convert to string
-  //     body = String(fileContent);
-  //   }
-  //   await cache.put(
-  //     url,
-  //     new Response(body, {
-  //       headers: {
-  //         'Content-Type': getContentType(filePath),
-  //         'Cache-Control': 'no-store',
-  //         ...SECURITY_HEADERS,
-  //       },
-  //     }),
-  //   );
-  // }));
-}
-
 // Handle messages from the main thread
 self.addEventListener('message', async (event: MessageEvent) => {
-  if (!event || !event.data || !event.data.type) return;
-
   if (event.data.type === 'UPLOAD_FILES') {
     const {projectId, files} = event.data.payload;
-    await uploadFiles(projectId, files);
+
+    // Store files in memory
+    fileStore.set(projectId, files);
+
+    // Store files in persistent cache
+    const cache = await caches.open(getCacheName(projectId));
+    // Remove old cache entries for this project
+    const keys = await cache.keys();
+    for (const request of keys) {
+      await cache.delete(request);
+    }
+    // Add new files
+    for (const [filePath, fileContent] of Object.entries(files)) {
+      const url = `/__build/${projectId}/${filePath}`;
+      // Ensure fileContent is a valid BodyInit (string, Blob, ArrayBuffer, etc.)
+      let body: BodyInit;
+      if (
+        typeof fileContent === 'string' ||
+        fileContent instanceof Blob ||
+        fileContent instanceof ArrayBuffer
+      ) {
+        body = fileContent;
+      } else if (fileContent instanceof Uint8Array) {
+        body = fileContent;
+      } else {
+        // Fallback: try to convert to string
+        body = String(fileContent);
+      }
+      await cache.put(
+        url,
+        new Response(body, {
+          headers: {
+            'Content-Type': getContentType(filePath),
+            'Cache-Control': 'no-store',
+            ...SECURITY_HEADERS,
+          },
+        }),
+      );
+    }
 
     // Send confirmation back to main thread
     event.source?.postMessage({
@@ -100,7 +93,7 @@ self.addEventListener('message', async (event: MessageEvent) => {
 });
 
 // Handle fetch events
-self.addEventListener('fetch', async (event: Event) => {
+self.addEventListener('fetch', (event: Event) => {
   const fetchEvent = event as FetchEvent;
   const url = new URL(fetchEvent.request.url);
 
