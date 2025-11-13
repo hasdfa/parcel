@@ -1,6 +1,6 @@
 {
   "name": "@vraksha/esbuild-browser",
-  "version": "1.0.1",
+  "version": "1.0.7",
   "license": "MIT",
   "publishConfig": {
     "access": "public"

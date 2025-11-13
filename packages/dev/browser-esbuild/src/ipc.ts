@@ -62,6 +62,7 @@ export interface BuildResponse {
   mangleCache_?: Record<string, string | boolean>;
   duration_: number;
   stderr_?: string;
+  stdout?: string; // JSON stringified object of errors and warnings
 }
 
 interface Task {

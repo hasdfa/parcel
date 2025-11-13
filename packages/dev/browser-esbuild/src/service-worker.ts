@@ -1,5 +1,10 @@
 /// <reference lib="webworker" />
 
+const PREVIEW_DOMAIN_SUFFIX = '{{PREVIEW_DOMAIN_SUFFIX}}';
+const hasPreviewDomainSuffix =
+  !PREVIEW_DOMAIN_SUFFIX.startsWith('{{') &&
+  !PREVIEW_DOMAIN_SUFFIX.endsWith('}}');
+
 // Store for uploaded files
 const fileStore = new Map();
 
@@ -57,7 +62,7 @@ self.addEventListener('message', async (event: MessageEvent) => {
     }
     // Add new files
     for (const [filePath, fileContent] of Object.entries(files)) {
-      const url = `/__build/${projectId}/${filePath}`;
+      const url = `/${projectId}/${filePath}`;
       // Ensure fileContent is a valid BodyInit (string, Blob, ArrayBuffer, etc.)
       let body: BodyInit;
       if (
@@ -67,11 +72,12 @@ self.addEventListener('message', async (event: MessageEvent) => {
       ) {
         body = fileContent;
       } else if (fileContent instanceof Uint8Array) {
-        body = fileContent;
+        body = fileContent as any;
       } else {
         // Fallback: try to convert to string
         body = String(fileContent);
       }
+
       await cache.put(
         url,
         new Response(body, {
@@ -97,11 +103,32 @@ self.addEventListener('fetch', (event: Event) => {
   const fetchEvent = event as FetchEvent;
   const url = new URL(fetchEvent.request.url);
 
+  if (hasPreviewDomainSuffix && url.hostname.endsWith(PREVIEW_DOMAIN_SUFFIX)) {
+    const projectId = url.hostname.slice(0, -PREVIEW_DOMAIN_SUFFIX.length);
+    const filePath = url.pathname;
+
+    const projectFiles = fileStore.get(projectId);
+    if (projectFiles && filePath in projectFiles) {
+      const response = new Response(projectFiles[filePath], {
+        headers: {
+          'Content-Type': getContentType(filePath),
+          'Cache-Control': 'no-store',
+          ...SECURITY_HEADERS,
+        },
+      });
+      fetchEvent.respondWith(response);
+      return;
+    }
+
+    fetchEvent.respondWith(new Response('Not Found', {status: 404}));
+    return;
+  }
+
   // Check if the request matches our pattern
   if (url.pathname.startsWith('/__build/')) {
     const pathParts = url.pathname.split('/');
     const projectId = pathParts[2];
-    const filePath = pathParts.slice(3).join('/');
+    const filePath = pathParts.slice(3).join('/') || 'index.html';
 
     // Get the project's files
     const projectFiles = fileStore.get(projectId);
@@ -122,9 +149,7 @@ self.addEventListener('fetch', (event: Event) => {
     fetchEvent.respondWith(
       (async () => {
         const cache = await caches.open(getCacheName(projectId));
-        const cachedResponse = await cache.match(
-          `/__build/${projectId}/${filePath}`,
-        );
+        const cachedResponse = await cache.match(`/${projectId}/${filePath}`);
         if (cachedResponse) {
           // Optionally repopulate fileStore for faster access next time
           if (projectFiles) {

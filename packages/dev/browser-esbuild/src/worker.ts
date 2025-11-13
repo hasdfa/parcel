@@ -165,9 +165,10 @@ const handler = function <R extends IPCRequest>(
     Promise.all([
       errors ? formatMessages(this, errors, {kind: 'error', color}) : [],
       warnings ? formatMessages(this, warnings, {kind: 'warning', color}) : [],
-    ]).then(([errors, warnings]) => {
+    ]).then(([fmterrors, fmtwarnings]) => {
       respond('resolve', {
-        stderr_: mergeStderrStreams([...errors, ...warnings], ''),
+        stderr_: mergeStderrStreams([...fmterrors, ...fmtwarnings], ''),
+        stdout: JSON.stringify({errors, warnings}),
       });
     });
   };
