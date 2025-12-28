@@ -8,7 +8,10 @@
       "@parcel/transformer-react-refresh-wrap"
     ],
     "*.{json,json5}": ["@parcel/transformer-json"],
-    "*.{css,scss,sass}": ["@parcel/transformer-postcss", "@parcel/transformer-css"],
+    "*.{css,scss,sass}": [
+      "@parcel/transformer-postcss",
+      "@parcel/transformer-css"
+    ],
     "*.{htm,html}": [
       "@parcel/transformer-posthtml",
       "@parcel/transformer-html"

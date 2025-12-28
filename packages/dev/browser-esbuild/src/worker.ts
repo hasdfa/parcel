@@ -15,6 +15,7 @@ import type {IPCRequest, IPCResponse, IPCStatus} from './ipc';
 import {NPMInstaller} from './dependencies-installer';
 import {FileSystemManager} from './file-system-manager';
 import {setFilesBulk} from './helpers/fs';
+import {htmlBundlerPlugin} from './html-plugin';
 
 declare const esbuild: any;
 
@@ -262,6 +263,7 @@ const handler = function <R extends IPCRequest>(
       this.build({
         ...request.options_,
         outdir,
+        plugins: [htmlBundlerPlugin(request.input_)],
       }).then(
         ({warnings, outputFiles, metafile, mangleCache}) =>
           finish(warnings, request.formatOptions, (stderr: string) => {
