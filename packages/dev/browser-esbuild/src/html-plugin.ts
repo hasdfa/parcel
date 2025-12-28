@@ -152,7 +152,7 @@ export function htmlBundlerPlugin(files: FilesMap): esbuild.Plugin {
 
       // 2) FIX onEnd output dir + emit HTML even when using `outfile`
       build.onEnd(result => {
-        if (!result.outputFiles) {
+        if (!result.outputFiles || result.errors.length > 0) {
           return;
         }
 
